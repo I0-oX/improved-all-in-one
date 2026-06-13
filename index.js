@@ -4727,8 +4727,8 @@ footer{margin-top:32px;text-align:center;font-size:.7rem;color:var(--faint);line
 </div>
 
 <script>
-var searchOrder = [];
-var streamOrder = [];
+var searchOrder = ['hifi','qobuz','deezer','sc','ia'];
+var streamOrder = ['qobuz','hifi','deezer','sc','ia'];
 var ctEnabled = { podcast: true, audiobook: true, radio: true };
 var SRCLABELS = { hifi:'Tidal HiFi', qobuz:'Qobuz', sc:'SoundCloud', ia:'Internet Archive', deezer:'Deezer' };
 
@@ -4872,12 +4872,21 @@ function doRefresh() {
   })
   .catch(function(e) { showStatus('refStatus', 'Error: ' + e.message, 'err'); });
 }
+// Render default source selections on page load
+renderSRow('ss-', searchOrder);
+updateHint('searchHint', searchOrder, 'search');
+renderSRow('st-', streamOrder);
+updateHint('streamHint', streamOrder, 'stream');
 </script>
 </body>
 </html>`;
   return html;
 }
 
+
+function getBaseUrl(c) {
+  return (c.req.header('x-forwarded-proto') || 'https') + '://' + c.req.header('host');
+}
 
 app.post('/generate', async function(c) {
   var b = await c.req.json().catch(() => ({}));
@@ -4915,6 +4924,10 @@ app.post('/generate', async function(c) {
   //   /{token}/podcast/manifest.json
   //   /{token}/audiobook/manifest.json
   // and avoids the bare /podcast/manifest.json path the user reported as unreliable.
+  // Add a nonce so every generated URL is unique and unguessable (~28-char hex)
+  var nonceBytes = new Uint8Array(14);
+  crypto.getRandomValues(nonceBytes);
+  cfg._n = Array.from(nonceBytes, function(b){ return b.toString(16).padStart(2,'0'); }).join('');
   var token = encodeBase64Url(JSON.stringify(cfg));
   if (!token) token = 'e30';
 
