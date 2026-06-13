@@ -4464,281 +4464,293 @@ app.get('/health', async (c) => {
 });
 
 // ─── Config / Generator Page ─────────────────────────────────────────────────
-function buildConfigPage(baseUrl) {
-  const ev = (s) => s.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
-  const html = `<!DOCTYPE html>
+function buildConfigPage(baseUrl) {
+  var ev = function(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  };
+
+  var html = `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Eclipse Universal Addon — Link Generator</title>
+<title>Eclipse Universal Addon</title>
 <link href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,600,700&display=swap" rel="stylesheet">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --bg:#0a0a0d;--surface:#111115;--surface-2:#17171d;--surface-3:#1e1e26;
-  --border:#242430;--border-h:#343448;
-  --text:#dddde8;--muted:#6e6e88;--faint:#2e2e3e;
-  --primary:#7c6af5;--primary-h:#9083f8;--glow:rgba(124,106,245,.15);
-  --ok:#3dba7a;--err:#e05555;
+  --bg:#0a0a0d;--surf:#111115;--surf2:#17171d;--surf3:#1e1e26;
+  --bdr:#242430;--bdrh:#343448;
+  --txt:#dddde8;--muted:#6e6e88;--faint:#2e2e3e;
+  --pri:#7c6af5;--prih:#9083f8;--glow:rgba(124,106,245,.15);
+  --ok:#3dba7a;--err:#e05555;--warn:#f0a030;
   --r:10px;--rsm:6px;--rlg:16px;
   --tr:160ms cubic-bezier(0.16,1,0.3,1);
 }
 html{-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;scroll-behavior:smooth}
-body{font-family:'Satoshi',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100dvh;line-height:1.55}
-.page{max-width:580px;margin:0 auto;padding:48px 20px 80px}
+body{font-family:'Satoshi',system-ui,sans-serif;background:var(--bg);color:var(--txt);min-height:100dvh;line-height:1.55}
+.page{max-width:600px;margin:0 auto;padding:48px 20px 80px}
 
-/* Header */
-.hdr{display:flex;align-items:center;gap:14px;margin-bottom:40px}
+.hdr{display:flex;align-items:center;gap:14px;margin-bottom:36px}
 .hdr-logo{width:44px;height:44px;border-radius:12px;background:var(--glow);border:1px solid rgba(124,106,245,.3);display:flex;align-items:center;justify-content:center;flex-shrink:0}
 .hdr-text h1{font-size:1.2rem;font-weight:700;letter-spacing:-.025em;color:#fff}
 .hdr-text p{font-size:.78rem;color:var(--muted);margin-top:2px}
 
-/* Cards */
-.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--rlg);padding:24px;margin-bottom:14px}
-.ctitle{font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:14px}
-.otag{font-size:.65rem;font-weight:500;text-transform:none;letter-spacing:.01em;color:var(--muted);opacity:.7;background:var(--surface-3);padding:2px 7px;border-radius:99px;border:1px solid var(--border);margin-left:4px}
+.card{background:var(--surf);border:1px solid var(--bdr);border-radius:var(--rlg);padding:22px;margin-bottom:12px}
+.ctitle{font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.otag{font-size:.62rem;font-weight:500;text-transform:none;letter-spacing:.01em;color:var(--muted);opacity:.7;background:var(--surf3);padding:1px 7px;border-radius:99px;border:1px solid var(--bdr)}
 
-/* Tip */
-.tip{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--rsm);padding:11px 14px;font-size:.78rem;color:var(--muted);line-height:1.65;margin-bottom:14px}
-.tip b{color:var(--text)}
+.tip{background:var(--surf2);border:1px solid var(--bdr);border-radius:var(--rsm);padding:10px 13px;font-size:.78rem;color:var(--muted);line-height:1.65;margin-bottom:12px}
+.tip b{color:var(--txt)}
 
-/* Form */
-.lbl{font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin-bottom:6px;margin-top:14px;display:block}
-.lbl:first-child{margin-top:0}
-input{width:100%;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--rsm);color:var(--text);padding:9px 12px;font-size:.875rem;font-family:'Satoshi',system-ui,sans-serif;transition:border-color var(--tr),box-shadow var(--tr);outline:none;margin-bottom:2px}
-input:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--glow)}
+label.lbl{display:block;font-size:.68rem;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin-bottom:5px;margin-top:12px}
+label.lbl:first-child{margin-top:0}
+input[type=text],input[type=password]{width:100%;background:var(--surf2);border:1px solid var(--bdr);border-radius:var(--rsm);color:var(--txt);padding:9px 12px;font-size:.875rem;font-family:'Satoshi',system-ui,sans-serif;transition:border-color var(--tr),box-shadow var(--tr);outline:none}
+input:focus{border-color:var(--pri);box-shadow:0 0 0 3px var(--glow)}
 input::placeholder{color:var(--faint)}
-.hint{font-size:.72rem;color:var(--faint);line-height:1.6;margin-bottom:10px}
-.hint a{color:var(--primary);text-decoration:none}.hint a:hover{text-decoration:underline}
+.hint{font-size:.72rem;color:var(--faint);line-height:1.6;margin-top:5px}
+.hint a{color:var(--pri);text-decoration:none}.hint a:hover{text-decoration:underline}
 .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 @media(max-width:460px){.row2{grid-template-columns:1fr}}
 
-/* Source picker */
-.stitle{font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:8px;margin-top:16px}
-.srow{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:4px}
-.sbtn{display:flex;flex-direction:column;align-items:center;justify-content:center;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r);padding:10px 14px;cursor:pointer;color:var(--muted);transition:all var(--tr);font-family:'Satoshi',system-ui,sans-serif;min-width:88px;position:relative;user-select:none}
-.sbtn:hover{background:var(--surface-3);color:var(--text);border-color:var(--border-h)}
+/* Content type toggles */
+.ct-row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:4px}
+.ct-btn{display:flex;align-items:center;gap:8px;background:var(--surf2);border:1px solid var(--bdr);border-radius:var(--r);padding:10px 14px;cursor:pointer;transition:all var(--tr);user-select:none;min-width:130px}
+.ct-btn:hover{border-color:var(--bdrh);background:var(--surf3)}
+.ct-btn.on{background:rgba(124,106,245,.12);border-color:rgba(124,106,245,.45)}
+.ct-btn.on .ct-dot{background:var(--pri);box-shadow:0 0 6px rgba(124,106,245,.5)}
+.ct-dot{width:8px;height:8px;border-radius:50%;background:var(--faint);transition:all var(--tr);flex-shrink:0}
+.ct-label{font-size:.8rem;font-weight:600;color:var(--muted);transition:color var(--tr)}
+.ct-btn.on .ct-label{color:#c0b8ff}
+.ct-sub{font-size:.67rem;color:var(--faint);margin-top:1px}
+.ct-btn.on .ct-sub{color:rgba(192,184,255,.5)}
+.ct-info{display:flex;flex-direction:column}
+
+/* Source pickers */
+.stitle{font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:7px;margin-top:16px}
+.srow{display:flex;flex-wrap:wrap;gap:7px}
+.sbtn{display:flex;flex-direction:column;align-items:center;justify-content:center;background:var(--surf2);border:1px solid var(--bdr);border-radius:var(--r);padding:9px 13px;cursor:pointer;color:var(--muted);transition:all var(--tr);min-width:86px;position:relative;user-select:none}
+.sbtn:hover{background:var(--surf3);color:var(--txt);border-color:var(--bdrh)}
 .sbtn.on{background:rgba(124,106,245,.12);border-color:rgba(124,106,245,.5);color:#c0b8ff}
 .sbtn .sn{font-size:.78rem;font-weight:700;line-height:1.3}
-.sbtn .st{font-size:.68rem;opacity:.55;margin-top:2px}
-.sbadge{position:absolute;top:-7px;left:50%;transform:translateX(-50%);background:var(--primary);color:#fff;font-size:.6rem;font-weight:800;padding:1px 6px;border-radius:99px;white-space:nowrap}
-.shint{font-size:.72rem;color:var(--faint);margin-bottom:2px;line-height:1.6}
+.sbtn .st{font-size:.67rem;opacity:.5;margin-top:2px}
+.sbadge{position:absolute;top:-8px;left:50%;transform:translateX(-50%);background:var(--pri);color:#fff;font-size:.58rem;font-weight:800;padding:1px 6px;border-radius:99px;white-space:nowrap}
+.shint{font-size:.72rem;color:var(--faint);margin-top:6px;line-height:1.6}
 
 /* Buttons */
 .brow{display:flex;gap:10px;flex-wrap:wrap}
 .btn{padding:11px 24px;border-radius:var(--rsm);font-size:.875rem;font-weight:700;font-family:'Satoshi',system-ui,sans-serif;cursor:pointer;transition:all var(--tr);border:none;outline:none}
-.bprimary{background:var(--primary);color:#fff;box-shadow:0 2px 12px rgba(124,106,245,.3)}
-.bprimary:hover{background:var(--primary-h);box-shadow:0 4px 20px rgba(124,106,245,.4);transform:translateY(-1px)}
+.bprimary{background:var(--pri);color:#fff;box-shadow:0 2px 12px rgba(124,106,245,.3)}
+.bprimary:hover{background:var(--prih);box-shadow:0 4px 20px rgba(124,106,245,.4);transform:translateY(-1px)}
 .bprimary:active{transform:none;box-shadow:none}
-.bprimary:disabled{background:var(--surface-3);color:var(--muted);box-shadow:none;cursor:not-allowed;transform:none}
-.bsec{background:var(--surface-2);border:1px solid var(--border);color:var(--muted)}
-.bsec:hover{border-color:var(--border-h);color:var(--text)}
+.bprimary:disabled{background:var(--surf3);color:var(--muted);box-shadow:none;cursor:not-allowed;transform:none}
+.bsec{background:var(--surf2);border:1px solid var(--bdr);color:var(--muted)}
+.bsec:hover{border-color:var(--bdrh);color:var(--txt)}
 
-/* Status */
 .status{padding:10px 14px;border-radius:var(--rsm);font-size:.8rem;margin-top:10px;display:none;line-height:1.5}
-.ok{background:rgba(61,186,122,.1);border:1px solid rgba(61,186,122,.25);color:var(--ok)}
-.err{background:rgba(224,85,85,.1);border:1px solid rgba(224,85,85,.25);color:var(--err)}
+.s-ok{background:rgba(61,186,122,.1);border:1px solid rgba(61,186,122,.25);color:var(--ok)}
+.s-err{background:rgba(224,85,85,.1);border:1px solid rgba(224,85,85,.25);color:var(--err)}
 
-/* Output */
 .outbox{display:none;margin-top:16px}
-.olbl{font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:6px;margin-top:14px}
-.olbl:first-child{margin-top:0}
-.orow{display:flex;gap:8px;align-items:stretch;margin-bottom:4px}
-.ourl{flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--rsm);padding:9px 12px;font-size:.72rem;font-family:'SF Mono',ui-monospace,monospace;color:#a09aff;word-break:break-all;min-height:38px;display:flex;align-items:center;line-height:1.5}
-.cbtn{background:var(--surface-2);border:1px solid var(--border);color:var(--muted);padding:8px 14px;border-radius:var(--rsm);cursor:pointer;font-size:.78rem;font-family:'Satoshi',system-ui,sans-serif;white-space:nowrap;transition:all var(--tr);flex-shrink:0}
-.cbtn:hover{border-color:rgba(124,106,245,.4);color:var(--primary)}
+.out-item{margin-bottom:14px}
+.out-item:last-child{margin-bottom:0}
+.olbl{font-size:.67rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin-bottom:5px}
+.orow{display:flex;gap:8px;align-items:stretch}
+.ourl{flex:1;background:var(--surf2);border:1px solid var(--bdr);border-radius:var(--rsm);padding:9px 12px;font-size:.72rem;font-family:'SF Mono',ui-monospace,monospace;color:#a09aff;word-break:break-all;line-height:1.5;min-height:38px;display:flex;align-items:center}
+.cbtn{background:var(--surf2);border:1px solid var(--bdr);color:var(--muted);padding:8px 14px;border-radius:var(--rsm);cursor:pointer;font-size:.78rem;font-family:'Satoshi',system-ui,sans-serif;white-space:nowrap;transition:all var(--tr);flex-shrink:0}
+.cbtn:hover{border-color:rgba(124,106,245,.4);color:var(--pri)}
 .cbtn.cp{border-color:rgba(61,186,122,.4);color:var(--ok);background:rgba(61,186,122,.08)}
 
-hr{border:none;border-top:1px solid var(--border);margin:20px 0}
+.divider{border:none;border-top:1px solid var(--bdr);margin:4px 0 16px}
 
-/* Sources table */
-.stbl{width:100%;border-collapse:collapse;font-size:.75rem;margin-bottom:4px}
-.stbl th{text-align:left;padding:5px 10px;font-size:.67rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--faint);border-bottom:1px solid var(--border)}
-.stbl td{padding:8px 10px;border-bottom:1px solid rgba(36,36,48,.5);color:var(--muted);vertical-align:top}
-.stbl tr:last-child td{border-bottom:none}
-.stbl td:first-child{color:var(--text);font-weight:600}
-.pill{display:inline-flex;font-size:.65rem;padding:2px 7px;border-radius:99px;font-weight:700}
-.pg{background:rgba(61,186,122,.1);color:#3dba7a;border:1px solid rgba(61,186,122,.2)}
-.py{background:rgba(240,160,48,.1);color:#f0a030;border:1px solid rgba(240,160,48,.2)}
-
-/* Steps */
-.steps{display:flex;flex-direction:column;gap:10px;margin-top:4px}
+.steps{display:flex;flex-direction:column;gap:10px}
 .step{display:flex;gap:12px;align-items:flex-start}
-.stepn{width:24px;height:24px;border-radius:50%;background:var(--glow);border:1px solid rgba(124,106,245,.3);color:var(--primary);font-size:.75rem;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px}
+.stepn{width:24px;height:24px;border-radius:50%;background:var(--glow);border:1px solid rgba(124,106,245,.3);color:var(--pri);font-size:.75rem;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px}
 .stept{font-size:.8rem;color:var(--muted);line-height:1.55}
-.stept b{color:var(--text)}
+.stept b{color:var(--txt)}
 
-footer{margin-top:36px;text-align:center;font-size:.7rem;color:var(--faint);line-height:1.8}
+footer{margin-top:32px;text-align:center;font-size:.7rem;color:var(--faint);line-height:1.8}
 </style>
 </head>
 <body>
 <div class="page">
 
-  <div class="hdr">
-    <div class="hdr-logo">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="rgba(124,106,245,.9)" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/><line x1="12" y1="3" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="21"/><line x1="3" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="21" y2="12"/></svg>
+<div class="hdr">
+  <div class="hdr-logo">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="rgba(124,106,245,.9)" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/><line x1="12" y1="3" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="21"/><line x1="3" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="21" y2="12"/></svg>
+  </div>
+  <div class="hdr-text">
+    <h1>Eclipse Universal Addon</h1>
+    <p>HiFi &middot; Qobuz &middot; SoundCloud &middot; Deezer &middot; Podcasts &middot; Audiobooks &middot; Radio</p>
+  </div>
+</div>
+
+<!-- Deployment URL -->
+<div class="card">
+  <div class="ctitle">Deployment URL <span class="otag">pre-filled</span></div>
+  <input type="text" id="vercelUrl" value="${baseUrl}" placeholder="https://your-addon.vercel.app">
+  <p class="hint">Only change this if you host on a different URL.</p>
+</div>
+
+<!-- HiFi -->
+<div class="card">
+  <div class="ctitle">HiFi / Tidal Instance URLs <span class="otag">optional</span></div>
+  <input type="text" id="hifiInst" placeholder="https://hifi.yourdomain.com (comma-separated)">
+  <p class="hint">Leave blank to use the built-in public instance pool.</p>
+</div>
+
+<!-- SoundCloud -->
+<div class="card">
+  <div class="ctitle">SoundCloud Client ID <span class="otag">optional</span></div>
+  <input type="text" id="scId" placeholder="Leave blank for auto-discovery">
+</div>
+
+<!-- Podcast Index -->
+<div class="card">
+  <div class="ctitle">Podcast Index <span class="otag">optional &mdash; <a href="https://podcastindex.org/login" target="_blank" rel="noopener">podcastindex.org/login</a></span></div>
+  <div class="row2">
+    <div><label class="lbl">API Key</label><input type="text" id="piKey" placeholder="API Key"></div>
+    <div><label class="lbl">API Secret</label><input type="password" id="piSecret" placeholder="API Secret"></div>
+  </div>
+  <p class="hint">Without these, podcast search uses Taddy + Apple Podcasts only.</p>
+</div>
+
+<!-- Taddy -->
+<div class="card">
+  <div class="ctitle">Taddy <span class="otag">optional &mdash; <a href="https://taddy.org/developers" target="_blank" rel="noopener">taddy.org/developers</a></span></div>
+  <div class="row2">
+    <div><label class="lbl">API Key</label><input type="text" id="taddyKey" placeholder="API Key"></div>
+    <div><label class="lbl">User ID</label><input type="text" id="taddyUid" placeholder="User ID"></div>
+  </div>
+</div>
+
+<!-- Content Types -->
+<div class="card">
+  <div class="ctitle">Content Types</div>
+  <div class="tip"><b>Tip:</b> Each enabled type gets its own install URL below. Disabled types are excluded from search results and no URL is shown.</div>
+  <div class="ct-row">
+    <div class="ct-btn on" id="ct-podcast" onclick="toggleCT('podcast')">
+      <div class="ct-dot"></div>
+      <div class="ct-info"><div class="ct-label">Podcasts</div><div class="ct-sub">PI · Taddy · Apple</div></div>
     </div>
-    <div class="hdr-text">
-      <h1>Eclipse Universal Addon</h1>
-      <p>HiFi &middot; Qobuz &middot; SoundCloud &middot; Deezer &middot; Podcasts &middot; Audiobooks &middot; Radio</p>
+    <div class="ct-btn on" id="ct-audiobook" onclick="toggleCT('audiobook')">
+      <div class="ct-dot"></div>
+      <div class="ct-info"><div class="ct-label">Audiobooks</div><div class="ct-sub">LibriVox · Archive</div></div>
     </div>
-  </div>
-
-  <!-- What's included -->
-  <div class="card">
-    <div class="ctitle">What's Included</div>
-    <div class="tip"><b>How it works:</b> Your API keys and source preferences are encoded into your personal URL and read server-side on every request. Nothing is stored.</div>
-    <table class="stbl">
-      <thead><tr><th>Source</th><th>Content</th><th>Auth</th></tr></thead>
-      <tbody>
-        <tr><td>Tidal / HiFi</td><td>Lossless &amp; Hi-Res music</td><td><span class="pill py">Your URLs</span></td></tr>
-        <tr><td>Qobuz</td><td>Hi-Res FLAC streaming &amp; search</td><td><span class="pill pg">Free proxy</span></td></tr>
-        <tr><td>SoundCloud</td><td>Tracks, artists, playlists</td><td><span class="pill pg">Auto</span></td></tr>
-        <tr><td>Deezer</td><td>Tracks, albums, artists, playlists</td><td><span class="pill pg">Free ARL</span></td></tr>
-        <tr><td>Internet Archive</td><td>Music, recordings, audiobooks</td><td><span class="pill pg">Free</span></td></tr>
-        <tr><td>Podcast Index</td><td>Podcast episodes</td><td><span class="pill py">Key + Secret</span></td></tr>
-        <tr><td>Taddy</td><td>Podcast episodes (fallback)</td><td><span class="pill py">Key + UID</span></td></tr>
-        <tr><td>Apple Podcasts</td><td>Podcasts via iTunes API</td><td><span class="pill pg">Free</span></td></tr>
-        <tr><td>LibriVox</td><td>Public domain audiobooks</td><td><span class="pill pg">Free</span></td></tr>
-        <tr><td>Radio Browser</td><td>50k+ live radio stations</td><td><span class="pill pg">Free</span></td></tr>
-      </tbody>
-    </table>
-  </div>
-
-  <!-- Deployment URL -->
-  <div class="card">
-    <div class="ctitle">Your Deployment URL <span class="otag">optional — pre-filled</span></div>
-    <input type="text" id="vercelUrl" value="${ev(baseUrl)}" placeholder="https://your-addon.vercel.app">
-    <div class="hint">Pre-filled with this deployment. Only change if you host on a different URL.</div>
-  </div>
-
-  <!-- HiFi -->
-  <div class="card">
-    <div class="ctitle">HiFi / Tidal Instance URLs <span class="otag">optional</span></div>
-    <input type="text" id="hifiInst" placeholder="https://hifi.yourdomain.com">
-    <div class="hint">Comma-separated custom instances. Leave blank to use the built-in public instance pool.</div>
-  </div>
-
-  <!-- SoundCloud -->
-  <div class="card">
-    <div class="ctitle">SoundCloud Client ID <span class="otag">optional</span></div>
-    <input type="text" id="scId" placeholder="Leave blank for auto-discovery">
-    <div class="hint">Auto-discovered from SoundCloud on first use if left blank.</div>
-  </div>
-
-  <!-- Podcast Index -->
-  <div class="card">
-    <div class="ctitle">Podcast Index <span class="otag">optional — <a href="https://podcastindex.org/login" target="_blank" rel="noopener">podcastindex.org/login</a></span></div>
-    <div class="row2">
-      <div><input type="text" id="piKey" placeholder="API Key"></div>
-      <div><input type="password" id="piSecret" placeholder="API Secret"></div>
-    </div>
-    <div class="hint">Without these, podcast search falls back to Taddy + Apple Podcasts only.</div>
-  </div>
-
-  <!-- Taddy -->
-  <div class="card">
-    <div class="ctitle">Taddy <span class="otag">optional — <a href="https://taddy.org/developers" target="_blank" rel="noopener">taddy.org/developers</a></span></div>
-    <div class="row2">
-      <div><input type="text" id="taddyKey" placeholder="API Key"></div>
-      <div><input type="text" id="taddyUid" placeholder="User ID"></div>
-    </div>
-    <div class="hint">Without these, podcast search uses Podcast Index + Apple only.</div>
-  </div>
-
-  <!-- Source Config -->
-  <div class="card">
-    <div class="ctitle">Source Configuration <span class="otag">optional</span></div>
-    <div class="tip"><b>How priority works:</b> Click sources to add them in order — first clicked = highest priority. Click again to remove. Leaving everything unselected uses all sources with default priority.</div>
-
-    <div class="stitle">Music Search Sources</div>
-    <div class="srow" id="searchRow">
-      <div class="sbtn" id="ss-hifi"   onclick="toggleSearch('hifi')">  <span class="sn">Tidal HiFi</span>      <span class="st">FLAC Hi-Res</span></div>
-      <div class="sbtn" id="ss-qobuz"  onclick="toggleSearch('qobuz')"> <span class="sn">Qobuz</span>           <span class="st">FLAC Hi-Res</span></div>
-      <div class="sbtn" id="ss-sc"     onclick="toggleSearch('sc')">    <span class="sn">SoundCloud</span>      <span class="st">MP3 Free</span></div>
-      <div class="sbtn" id="ss-ia"     onclick="toggleSearch('ia')">    <span class="sn">Internet Archive</span><span class="st">Various</span></div>
-      <div class="sbtn" id="ss-deezer" onclick="toggleSearch('deezer')"><span class="sn">Deezer</span>          <span class="st">MP3 Free</span></div>
-    </div>
-    <div class="shint" id="searchHint">Nothing selected — all sources used with default priority.</div>
-
-    <div class="stitle">Music Stream Sources</div>
-    <div class="srow" id="streamRow">
-      <div class="sbtn" id="st-hifi"   onclick="toggleStream('hifi')">  <span class="sn">Tidal HiFi</span>      <span class="st">FLAC Hi-Res</span></div>
-      <div class="sbtn" id="st-qobuz"  onclick="toggleStream('qobuz')"> <span class="sn">Qobuz</span>           <span class="st">FLAC Hi-Res</span></div>
-      <div class="sbtn" id="st-sc"     onclick="toggleStream('sc')">    <span class="sn">SoundCloud</span>      <span class="st">MP3 Free</span></div>
-      <div class="sbtn" id="st-ia"     onclick="toggleStream('ia')">    <span class="sn">Internet Archive</span><span class="st">Various</span></div>
-      <div class="sbtn" id="st-deezer" onclick="toggleStream('deezer')"><span class="sn">Deezer</span>          <span class="st">MP3 Free</span></div>
-    </div>
-    <div class="shint" id="streamHint">Nothing selected — all sources used with default priority.</div>
-  </div>
-
-  <!-- Generate -->
-  <div class="card">
-    <div class="ctitle">Generate URLs</div>
-    <div class="brow">
-      <button class="btn bprimary" id="genBtn" onclick="doGenerate()">Generate My Addon URLs</button>
-    </div>
-    <div class="status" id="genStatus"></div>
-    <div class="outbox" id="genBox">
-      <div class="olbl">&#9834; Music — paste into Eclipse for the standard player</div>
-      <div class="orow"><div class="ourl" id="genManifest"></div><button class="cbtn" id="copyManifest" onclick="copyIt('genManifest','copyManifest')">Copy</button></div>
-      <div class="olbl">&#127897; Podcasts — install separately for podcast player (&#xB1;15s skip, speed control)</div>
-      <div class="orow"><div class="ourl" id="genPodcast"></div><button class="cbtn" id="copyPodcast" onclick="copyIt('genPodcast','copyPodcast')">Copy</button></div>
-      <div class="olbl">&#128214; Audiobooks — install separately for audiobook player (&#xB1;30s skip, speed control)</div>
-      <div class="orow"><div class="ourl" id="genAudiobook"></div><button class="cbtn" id="copyAudiobook" onclick="copyIt('genAudiobook','copyAudiobook')">Copy</button></div>
-      <div class="olbl">&#128251; Live Radio — Radio Browser + SomaFM</div>
-      <div class="orow"><div class="ourl" id="genRadio"></div><button class="cbtn" id="copyRadio" onclick="copyIt('genRadio','copyRadio')">Copy</button></div>
+    <div class="ct-btn on" id="ct-radio" onclick="toggleCT('radio')">
+      <div class="ct-dot"></div>
+      <div class="ct-info"><div class="ct-label">Radio</div><div class="ct-sub">Radio Browser · SomaFM</div></div>
     </div>
   </div>
+  <p class="hint" style="margin-top:10px">Music is always included and cannot be disabled.</p>
+</div>
 
-  <!-- Refresh existing -->
-  <div class="card">
-    <div class="ctitle">Already Have a URL? Refresh It</div>
-    <input type="text" id="existingUrl" placeholder="Paste your existing addon URL">
-    <div class="brow" style="margin-top:10px">
-      <button class="btn bsec" onclick="doRefresh()">Refresh Existing URL</button>
+<!-- Music Sources -->
+<div class="card">
+  <div class="ctitle">Music Source Priority <span class="otag">optional</span></div>
+  <div class="tip"><b>Click to add in priority order.</b> First clicked = highest priority. Leave blank for default order. Click again to remove.</div>
+
+  <div class="stitle">Search Sources</div>
+  <div class="srow" id="searchRow">
+    <div class="sbtn" id="ss-hifi"   onclick="toggleSearch('hifi')">  <span class="sn">Tidal HiFi</span><span class="st">Hi-Res FLAC</span></div>
+    <div class="sbtn" id="ss-qobuz"  onclick="toggleSearch('qobuz')"> <span class="sn">Qobuz</span>     <span class="st">Hi-Res FLAC</span></div>
+    <div class="sbtn" id="ss-sc"     onclick="toggleSearch('sc')">    <span class="sn">SoundCloud</span><span class="st">MP3 Free</span></div>
+    <div class="sbtn" id="ss-ia"     onclick="toggleSearch('ia')">    <span class="sn">Archive</span>   <span class="st">Various</span></div>
+    <div class="sbtn" id="ss-deezer" onclick="toggleSearch('deezer')"><span class="sn">Deezer</span>    <span class="st">MP3 Free</span></div>
+  </div>
+  <div class="shint" id="searchHint">Nothing selected — all sources used with default priority.</div>
+
+  <div class="stitle">Stream Sources</div>
+  <div class="srow" id="streamRow">
+    <div class="sbtn" id="st-hifi"   onclick="toggleStream('hifi')">  <span class="sn">Tidal HiFi</span><span class="st">Hi-Res FLAC</span></div>
+    <div class="sbtn" id="st-qobuz"  onclick="toggleStream('qobuz')"> <span class="sn">Qobuz</span>     <span class="st">Hi-Res FLAC</span></div>
+    <div class="sbtn" id="st-sc"     onclick="toggleStream('sc')">    <span class="sn">SoundCloud</span><span class="st">MP3 Free</span></div>
+    <div class="sbtn" id="st-ia"     onclick="toggleStream('ia')">    <span class="sn">Archive</span>   <span class="st">Various</span></div>
+    <div class="sbtn" id="st-deezer" onclick="toggleStream('deezer')"><span class="sn">Deezer</span>    <span class="st">MP3 Free</span></div>
+  </div>
+  <div class="shint" id="streamHint">Nothing selected — all sources used with default priority.</div>
+</div>
+
+<!-- Generate -->
+<div class="card">
+  <div class="ctitle">Generate URLs</div>
+  <div class="brow">
+    <button class="btn bprimary" id="genBtn" onclick="doGenerate()">Generate My Addon URLs</button>
+  </div>
+  <div class="status" id="genStatus"></div>
+  <div class="outbox" id="genBox">
+    <div class="out-item" id="out-music">
+      <div class="olbl">&#9834; Music</div>
+      <div class="orow"><div class="ourl" id="urlMusic"></div><button class="cbtn" id="cpMusic" onclick="copyIt('urlMusic','cpMusic')">Copy</button></div>
     </div>
-    <div class="status" id="refStatus"></div>
-    <div class="outbox" id="refBox">
-      <div class="olbl">Refreshed Manifest URL</div>
-      <div class="orow"><div class="ourl" id="refManifest"></div><button class="cbtn" id="copyRef" onclick="copyIt('refManifest','copyRef')">Copy</button></div>
+    <div class="out-item" id="out-podcast">
+      <div class="olbl">&#127897; Podcasts</div>
+      <div class="orow"><div class="ourl" id="urlPodcast"></div><button class="cbtn" id="cpPodcast" onclick="copyIt('urlPodcast','cpPodcast')">Copy</button></div>
+    </div>
+    <div class="out-item" id="out-audiobook">
+      <div class="olbl">&#128214; Audiobooks</div>
+      <div class="orow"><div class="ourl" id="urlAudiobook"></div><button class="cbtn" id="cpAudiobook" onclick="copyIt('urlAudiobook','cpAudiobook')">Copy</button></div>
+    </div>
+    <div class="out-item" id="out-radio">
+      <div class="olbl">&#128251; Radio</div>
+      <div class="orow"><div class="ourl" id="urlRadio"></div><button class="cbtn" id="cpRadio" onclick="copyIt('urlRadio','cpRadio')">Copy</button></div>
     </div>
   </div>
+</div>
 
-  <!-- How to install -->
-  <div class="card">
-    <div class="ctitle">How to Install</div>
-    <div class="steps">
-      <div class="step"><div class="stepn">1</div><div class="stept">Enter your Vercel URL and any optional API keys above</div></div>
-      <div class="step"><div class="stepn">2</div><div class="stept">Optionally configure source priorities, then click <b>Generate My Addon URLs</b></div></div>
-      <div class="step"><div class="stepn">3</div><div class="stept">Open <b>Eclipse</b> &rarr; Settings &rarr; Connections &rarr; Add Connection &rarr; Addon</div></div>
-      <div class="step"><div class="stepn">4</div><div class="stept">Paste a Manifest URL and tap <b>Install</b></div></div>
-    </div>
+<!-- Refresh -->
+<div class="card">
+  <div class="ctitle">Refresh Existing URL <span class="otag">optional</span></div>
+  <input type="text" id="existingUrl" placeholder="Paste your existing addon URL here">
+  <div class="brow" style="margin-top:10px">
+    <button class="btn bsec" onclick="doRefresh()">Refresh URL</button>
   </div>
+  <div class="status" id="refStatus"></div>
+  <div class="outbox" id="refBox">
+    <div class="olbl">Refreshed URL</div>
+    <div class="orow"><div class="ourl" id="urlRef"></div><button class="cbtn" id="cpRef" onclick="copyIt('urlRef','cpRef')">Copy</button></div>
+  </div>
+</div>
 
-  <footer>Eclipse Universal Addon &bull; Keys encoded in URL &bull; Never stored server-side</footer>
+<!-- How to install -->
+<div class="card">
+  <div class="ctitle">How to Install</div>
+  <div class="steps">
+    <div class="step"><div class="stepn">1</div><div class="stept">Fill in any optional API keys above, then click <b>Generate My Addon URLs</b></div></div>
+    <div class="step"><div class="stepn">2</div><div class="stept">Open <b>Eclipse</b> &rarr; Settings &rarr; Connections &rarr; Add Connection &rarr; Addon</div></div>
+    <div class="step"><div class="stepn">3</div><div class="stept">Paste a Manifest URL and tap <b>Install</b>. Install each content type separately for its dedicated player UI.</div></div>
+  </div>
+</div>
+
+<footer>Eclipse Universal Addon &bull; Keys encoded in URL &bull; Never stored server-side</footer>
 </div>
 
 <script>
 var searchOrder = [];
 var streamOrder = [];
-var SRCLABELS = {hifi:'Tidal HiFi',qobuz:'Qobuz',sc:'SoundCloud',ia:'Internet Archive',deezer:'Deezer'};
+var ctEnabled = { podcast: true, audiobook: true, radio: true };
+var SRCLABELS = { hifi:'Tidal HiFi', qobuz:'Qobuz', sc:'SoundCloud', ia:'Internet Archive', deezer:'Deezer' };
+
+function toggleCT(type) {
+  ctEnabled[type] = !ctEnabled[type];
+  var btn = document.getElementById('ct-' + type);
+  if (ctEnabled[type]) btn.classList.add('on'); else btn.classList.remove('on');
+}
 
 function toggleSearch(src) {
   var idx = searchOrder.indexOf(src);
   if (idx === -1) searchOrder.push(src); else searchOrder.splice(idx, 1);
-  renderRow('ss-', searchOrder);
-  updateHint('searchHint', searchOrder);
+  renderSRow('ss-', searchOrder);
+  updateHint('searchHint', searchOrder, 'search');
 }
 function toggleStream(src) {
   var idx = streamOrder.indexOf(src);
   if (idx === -1) streamOrder.push(src); else streamOrder.splice(idx, 1);
-  renderRow('st-', streamOrder);
-  updateHint('streamHint', streamOrder);
+  renderSRow('st-', streamOrder);
+  updateHint('streamHint', streamOrder, 'stream');
 }
-function renderRow(pfx, order) {
+function renderSRow(pfx, order) {
   ['hifi','qobuz','sc','ia','deezer'].forEach(function(src) {
     var el = document.getElementById(pfx + src);
     if (!el) return;
@@ -4754,19 +4766,20 @@ function renderRow(pfx, order) {
     }
   });
 }
-function updateHint(hintId, order) {
+function updateHint(hintId, order, type) {
   var el = document.getElementById(hintId);
   if (!el) return;
   if (!order.length) { el.textContent = 'Nothing selected \u2014 all sources used with default priority.'; return; }
   var names = order.map(function(s) { return SRCLABELS[s]; });
   var unsel = ['hifi','qobuz','sc','ia','deezer'].filter(function(s) { return order.indexOf(s) === -1; });
   var msg = 'Priority: ' + names.join(' \u2192 ');
-  if (unsel.length) msg += ' \u2014 ' + unsel.map(function(s) { return SRCLABELS[s]; }).join(', ') + ' disabled';
+  if (unsel.length) msg += '  \u2014  disabled: ' + unsel.map(function(s) { return SRCLABELS[s]; }).join(', ');
   el.textContent = msg;
 }
+
 function showStatus(id, msg, type) {
   var el = document.getElementById(id);
-  el.textContent = msg; el.className = 'status ' + type; el.style.display = 'block';
+  el.textContent = msg; el.className = 'status ' + (type === 'ok' ? 's-ok' : 's-err'); el.style.display = 'block';
 }
 function copyIt(urlId, btnId) {
   var text = document.getElementById(urlId).textContent.trim();
@@ -4780,74 +4793,80 @@ function copyIt(urlId, btnId) {
 
 function doGenerate() {
   var btn = document.getElementById('genBtn');
-  var vercel = (document.getElementById('vercelUrl').value || '').trim().replace(/\\/+$/, '');
+  var vercel = (document.getElementById('vercelUrl').value || '').trim().replace(/\/+$/, '');
   if (!vercel) vercel = window.location.origin;
   if (vercel.indexOf('http') !== 0) vercel = 'https://' + vercel;
 
   btn.disabled = true; btn.textContent = 'Generating\u2026';
+  document.getElementById('genStatus').style.display = 'none';
 
   var body = { vercelUrl: vercel };
-  var hifi = document.getElementById('hifiInst').value.trim();
-  var sc   = document.getElementById('scId').value.trim();
-  var pik  = document.getElementById('piKey').value.trim();
-  var pis  = document.getElementById('piSecret').value.trim();
-  var tk   = document.getElementById('taddyKey').value.trim();
-  var tu   = document.getElementById('taddyUid').value.trim();
-  if (hifi) body.hifi      = hifi;
-  if (sc)   body.sc        = sc;
-  if (pik)  body.pikey     = pik;
-  if (pis)  body.pisecret  = pis;
-  if (tk)   body.taddykey  = tk;
-  if (tu)   body.taddyuid  = tu;
+  var v = function(id) { return (document.getElementById(id).value || '').trim(); };
+  if (v('hifiInst'))  body.hifi       = v('hifiInst');
+  if (v('scId'))      body.sc         = v('scId');
+  if (v('piKey'))     body.pi_key     = v('piKey');
+  if (v('piSecret'))  body.pi_secret  = v('piSecret');
+  if (v('taddyKey'))  body.taddy_key  = v('taddyKey');
+  if (v('taddyUid'))  body.taddy_uid  = v('taddyUid');
 
+  // Content type disable flags
+  if (!ctEnabled.podcast)   body.no_podcast   = true;
+  if (!ctEnabled.audiobook) body.no_audiobook = true;
+  if (!ctEnabled.radio)     body.no_radio     = true;
+
+  // Music source priority
   var allSrc = ['hifi','qobuz','sc','ia','deezer'];
   if (searchOrder.length) {
-    body.searchorder = searchOrder;
-    allSrc.forEach(function(s) { if (searchOrder.indexOf(s) === -1) body['no' + s] = true; });
+    body.search_order = searchOrder;
+    allSrc.forEach(function(s) { if (searchOrder.indexOf(s) === -1) body['no_' + s] = true; });
   }
   if (streamOrder.length) {
-    body.streamorder = streamOrder;
-    allSrc.forEach(function(s) { if (streamOrder.indexOf(s) === -1) body['no' + s] = true; });
+    body.stream_order = streamOrder;
   }
 
   fetch('/generate', {
     method: 'POST',
-    headers: {'Content-Type': 'application/json'},
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
-  })
-  .then(function(r) {
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    return r.json();
-  })
-  .then(function(data) {
-    if (data.error) throw new Error(data.error);
-    document.getElementById('genManifest').textContent  = data.manifestUrl          || '';
-    document.getElementById('genPodcast').textContent   = data.podcastManifestUrl   || '';
-    document.getElementById('genAudiobook').textContent = data.audiobookManifestUrl || '';
-    document.getElementById('genRadio').textContent     = data.radioManifestUrl     || '';
-    document.getElementById('genBox').style.display = 'block';
-    showStatus('genStatus', '\u2713 Done! Copy an install URL above.', 'ok');
-  })
-  .catch(function(e) {
-    showStatus('genStatus', 'Error: ' + e.message, 'err');
-  })
-  .finally(function() {
-    btn.disabled = false; btn.textContent = 'Generate My Addon URLs';
-  });
-}
-
-function doRefresh() {
-  var raw = (document.getElementById('existingUrl').value || '').trim();
-  if (!raw) { showStatus('refStatus', 'Paste your existing addon URL first.', 'err'); return; }
-  fetch('/refresh', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({existingUrl: raw})
   })
   .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
   .then(function(data) {
     if (data.error) throw new Error(data.error);
-    document.getElementById('refManifest').textContent = data.manifestUrl || '';
+
+    document.getElementById('urlMusic').textContent = data.manifestUrl || '';
+
+    // Only show podcast/audiobook/radio if enabled
+    var showPodcast   = ctEnabled.podcast   && data.podcastManifestUrl;
+    var showAudiobook = ctEnabled.audiobook && data.audiobookManifestUrl;
+    var showRadio     = ctEnabled.radio     && data.radioManifestUrl;
+
+    document.getElementById('out-podcast').style.display   = showPodcast   ? '' : 'none';
+    document.getElementById('out-audiobook').style.display = showAudiobook ? '' : 'none';
+    document.getElementById('out-radio').style.display     = showRadio     ? '' : 'none';
+
+    if (showPodcast)   document.getElementById('urlPodcast').textContent   = data.podcastManifestUrl;
+    if (showAudiobook) document.getElementById('urlAudiobook').textContent = data.audiobookManifestUrl;
+    if (showRadio)     document.getElementById('urlRadio').textContent     = data.radioManifestUrl;
+
+    document.getElementById('genBox').style.display = 'block';
+    showStatus('genStatus', '\u2713 Done! Copy your install URLs above.', 'ok');
+  })
+  .catch(function(e) { showStatus('genStatus', 'Error: ' + e.message, 'err'); })
+  .finally(function() { btn.disabled = false; btn.textContent = 'Generate My Addon URLs'; });
+}
+
+function doRefresh() {
+  var raw = (document.getElementById('existingUrl').value || '').trim();
+  if (!raw) { showStatus('refStatus', 'Paste your existing URL first.', 'err'); return; }
+  fetch('/refresh', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ existingUrl: raw })
+  })
+  .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+  .then(function(data) {
+    if (data.error) throw new Error(data.error);
+    document.getElementById('urlRef').textContent = data.manifestUrl || '';
     document.getElementById('refBox').style.display = 'block';
     showStatus('refStatus', '\u2713 Refreshed!', 'ok');
   })
@@ -4859,12 +4878,7 @@ function doRefresh() {
   return html;
 }
 
-// ─── Helper ───────────────────────────────────────────────────────────────────
-function getBaseUrl(c) {
-  return (c.req.header('x-forwarded-proto') || 'https') + '://' + c.req.header('host');
-}
 
-// ─── POST /generate — server-side token builder ───────────────────────────────
 app.post('/generate', async function(c) {
   var b = await c.req.json().catch(() => ({}));
   var vercel = (b.vercelUrl || '').trim().replace(/\/+$/, '');
