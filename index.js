@@ -3032,8 +3032,10 @@ async function handleSearch(c) {
   const _canonAlbKey = item => {
     const t = _normStr(item.title  || '');
     const a = _normStr((item.artist || '').split(/[,&]/)[0]);
-    const y = item.year ? String(item.year).slice(0, 4) : '';
-    return 'alb:' + t + '|' + a + '|' + y;
+    // Year intentionally excluded: sources report it inconsistently (0, null, undefined, actual year)
+    // which caused the same album from different sources to get different keys and appear as dupes.
+    // title+artist is sufficient to identify the same album across Tidal/Qobuz/Deezer/SC.
+    return 'alb:' + t + '|' + a;
   };
 
   const interleave = (sourceLists) => {
@@ -3131,9 +3133,11 @@ async function handleSearch(c) {
   });
   const _seenAlbumKeys = new Set();
   const _dedupeAlbums = list => list.filter(a => {
-    const y = a.year ? String(a.year).slice(0, 4) : '';
-    const k = _normStr(a.title || '') + '|' + _normStr((a.artist || '').split(/[,&]/)[0]) + '|' + y;
-    if (!k || k === '||') return true;
+    // Year excluded from key — same reason as _canonAlbKey: year is reported inconsistently
+    // across sources (safeYear returns 0 for null/undefined which is falsy → '' in key),
+    // causing the same album to survive the dedup pass with different year-based keys.
+    const k = _normStr(a.title || '') + '|' + _normStr((a.artist || '').split(/[,&]/)[0]);
+    if (!k || k === '|') return true;
     if (_seenAlbumKeys.has(k)) return false;
     _seenAlbumKeys.add(k); return true;
   });
@@ -3585,6 +3589,12 @@ async function handleStream(c) {
             for (const dt of (dRes?.tracks || [])) {
               const _dd = (meta.duration && dt.duration) ? Math.abs(meta.duration - dt.duration) : 0;
               if (_dd > 20) continue;
+              // Artist guard: reject obvious wrong-artist matches (same title, different artist)
+              const _hfDzArtNorm = _normStr(dt.artist || '');
+              const _hfMetaArtWords = _normStr(meta.artist || '').split(/\s+/).filter(w => w.length > 1);
+              const _hfArtMatch = !meta.artist || _hfMetaArtWords.length === 0 ||
+                _hfMetaArtWords.some(w => _hfDzArtNorm.includes(w));
+              if (!_hfArtMatch) continue;
               const ds = await deezerStream(String(dt.id), c.env, c.req);
               if (ds) { await cacheSet(streamCacheKey, { ...ds, fallback: 'deezer' }, 280); return c.json({ ...ds, fallback: 'deezer' }); }
             }
@@ -3781,8 +3791,18 @@ async function handleStream(c) {
         if (_fbSrc === 'deezer') {
           try {
             const dzRes = await deezerSearch(`${scMeta.artist} ${scMeta.title}`);
-            const dzTrack = dzRes?.tracks?.[0];
-            if (dzTrack?.id) {
+            for (const dzTrack of (dzRes?.tracks || [])) {
+              if (!dzTrack?.id) continue;
+              // Duration guard: reject if duration differs by more than 20s (wrong track same name)
+              const _scDzDd = (scMeta.duration && dzTrack.duration)
+                ? Math.abs(scMeta.duration - dzTrack.duration) : 0;
+              if (_scDzDd > 20) continue;
+              // Artist guard: at least one word of the expected artist must appear in deezer artist
+              const _scDzArtNorm = _normStr(dzTrack.artist || '');
+              const _scMetaArtWords = _normStr(scMeta.artist || '').split(/(?=[A-Z])|\s+/).filter(w => w.length > 1);
+              const _scArtMatch = !scMeta.artist || _scMetaArtWords.length === 0 ||
+                _scMetaArtWords.some(w => _scDzArtNorm.includes(w));
+              if (!_scArtMatch) continue;
               const dzId = dzTrack.id.replace('deezer:', '');
               const dzStream = await deezerStream(dzId, c.env, c.req);
               if (dzStream) { console.log(`[SC→Deezer] ${scMeta.title} → ${dzId}`); statHit('deezer'); return c.json({ ...dzStream, fallback: 'deezer' }); }
@@ -3852,6 +3872,12 @@ async function handleStream(c) {
             for (const _dt of (_dRes?.tracks || [])) {
               const _dd = (_qMeta.duration && _dt.duration) ? Math.abs(_qMeta.duration - _dt.duration) : 0;
               if (_dd > 20) continue;
+              // Artist guard: reject wrong-artist matches
+              const _qDzArtNorm = _normStr(_dt.artist || '');
+              const _qMetaArtWords = _normStr(_qMeta.artist || '').split(/\s+/).filter(w => w.length > 1);
+              const _qArtMatch = !_qMeta.artist || _qMetaArtWords.length === 0 ||
+                _qMetaArtWords.some(w => _qDzArtNorm.includes(w));
+              if (!_qArtMatch) continue;
               const _ds = await deezerStream(String(_dt.id), c.env, c.req);
               if (_ds) { await cacheSet(sCacheKey, { ..._ds, fallback: 'deezer' }, 280); return c.json({ ..._ds, fallback: 'deezer' }); }
             }
