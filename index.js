@@ -2878,8 +2878,9 @@ async function handleStream(c) {
         const _tkInstB64 = _tkParts[0];
         const _tkOrigId = _tkParts.slice(1).join('_');
         const _tkInst = decodeBase64Url(_tkInstB64);
+        // FIX: 2s timeout (was 5s) — don't block Qobuz lookup waiting for slow Tidal instances
         const _tkRes = await axios.get(`${_tkInst}/track/`, {
-          params: { id: _tkOrigId }, headers: { 'User-Agent': UA }, timeout: 5000,
+          params: { id: _tkOrigId }, headers: { 'User-Agent': UA }, timeout: 2000,
         });
         const _tkD = _tkRes.data?.data || _tkRes.data || {};
         const _tkT = _tkD.item || _tkD;
@@ -3010,18 +3011,22 @@ async function handleStream(c) {
     const _hIdx  = _scStreamOrder.indexOf('hifi');
 
     // Try Qobuz before SC if qobuz is ranked higher (lower index) than sc
-    if (scMeta0?.title && _qIdx !== -1 && (_scIdx === -1 || _qIdx < _scIdx) && !cfg.noQobuz) {
+    // FIX: ISRC-gate — only upgrade SC tracks that have a confirmed ISRC.
+    // Without ISRC, qobuzFindBestTrack does fuzzy title/artist search which matches wrong tracks
+    // on SC-exclusive / indie content. If no ISRC, always play natively on SC.
+    if (scMeta0?.title && scMeta0?.isrc && _qIdx !== -1 && (_scIdx === -1 || _qIdx < _scIdx) && !cfg.noQobuz) {
       try {
-        const qTrack = await qobuzFindBestTrack(scMeta0.title, scMeta0.artist, scMeta0.isrc || null, c.env, scMeta0.duration);
+        const qTrack = await qobuzFindBestTrack(scMeta0.title, scMeta0.artist, scMeta0.isrc, c.env, scMeta0.duration);
         if (qTrack?.id) {
           const _qDurDiff = (scMeta0.duration && qTrack.duration)
-            ? Math.abs(scMeta0.duration - qTrack.duration) : 0;
-          if (_qDurDiff > 15) {
-            console.log(`[SC→Qobuz] dur mismatch ${_qDurDiff}s — skipping upgrade`);
+            ? Math.abs(scMeta0.duration - qTrack.duration) : 999;
+          // FIX: tighter 5s guard (was 15s) — prevents wrong-track substitution on close matches
+          if (_qDurDiff > 5) {
+            console.log(`[SC→Qobuz] dur mismatch ${_qDurDiff}s — playing SC natively`);
           } else {
             const qStream = await qobuzStream(qTrack.id, c.env);
             if (qStream) {
-              console.log(`[SC→Qobuz priority] ${scMeta0.isrc || scMeta0.title} → ${qTrack.id}`);
+              console.log(`[SC→Qobuz priority] ISRC:${scMeta0.isrc} → qobuz:${qTrack.id}`);
               await cacheSet(scStreamCacheKey, qStream, 280);
               return c.json(qStream);
             }
@@ -3030,18 +3035,18 @@ async function handleStream(c) {
       } catch(e) { console.warn('[SC→Qobuz priority]', e.message); }
     }
 
-    // Try HiFi/Tidal before SC if hifi is ranked higher than sc
-    if (scMeta0?.title && _hIdx !== -1 && (_scIdx === -1 || _hIdx < _scIdx) && !cfg.noHifi) {
+    // Try HiFi/Tidal before SC if hifi is ranked higher than sc — also ISRC-gated
+    if (scMeta0?.title && scMeta0?.isrc && _hIdx !== -1 && (_scIdx === -1 || _hIdx < _scIdx) && !cfg.noHifi) {
       try {
         const hifiRes = await hifiSearch(`${scMeta0.artist} ${scMeta0.title}`, cfg.hifiInstances);
         const hifiTracks = Array.isArray(hifiRes) ? hifiRes : (hifiRes?.tracks || []);
         for (const ht of hifiTracks.slice(0, 3)) {
           const _hDurDiff = (scMeta0.duration && ht.duration)
-            ? Math.abs(scMeta0.duration - ht.duration) : 0;
-          if (_hDurDiff > 15) { console.log(`[SC→HiFi] dur mismatch ${_hDurDiff}s — skip`); continue; }
+            ? Math.abs(scMeta0.duration - ht.duration) : 999;
+          if (_hDurDiff > 5) { console.log(`[SC→HiFi] dur mismatch ${_hDurDiff}s — skip`); continue; }
           const hs = await hifiStream(ht.id, cfg.hifiInstances, cfg.preferredQuality);
           if (hs) {
-            console.log(`[SC→HiFi priority] ${scMeta0.title} → ${ht.id}`);
+            console.log(`[SC→HiFi priority] ISRC:${scMeta0.isrc} → ${ht.id}`);
             await cacheSet(scStreamCacheKey, hs, 280);
             return c.json(hs);
           }
@@ -4006,10 +4011,16 @@ async function handleArtist(c) {
 
       // ── Albums — merge all sources, dedupe by album id ───────────────────────
       const albumMap = {};
+      const albumTitleSeen = new Set(); // FIX: dedup albums by title+year to catch int/string id mismatches
       const addAlbums = (arr) => {
         for (const a of (Array.isArray(arr) ? arr : [])) {
           if (!a?.id) continue;
-          if (!albumMap[String(a.id)]) albumMap[String(a.id)] = a;
+          const _ak = String(a.id);
+          if (albumMap[_ak]) continue;
+          const _aNorm = `${(a.title||'').toLowerCase().replace(/[^a-z0-9]/g,'')}:${(a.releaseDate||'').slice(0,4)}`;
+          if (_aNorm.length > 1 && albumTitleSeen.has(_aNorm)) continue;
+          if (_aNorm.length > 1) albumTitleSeen.add(_aNorm);
+          albumMap[_ak] = a;
         }
       };
       // Helper to extract array from any known response shape
@@ -4046,10 +4057,16 @@ async function handleArtist(c) {
 
       // ── Tracks — merge discography + toptracks ───────────────────────────────
       const trackMap = {};
+      const trackTitleArtistSeen = new Set(); // FIX: secondary dedup by title+artist
       const addTracks = (arr) => {
         for (const t of (Array.isArray(arr) ? arr : [])) {
           if (!t?.id) continue;
-          if (!trackMap[String(t.id)]) trackMap[String(t.id)] = t;
+          const _tk = String(t.id);
+          if (trackMap[_tk]) continue;
+          const _tNorm = `${(t.title||'').toLowerCase().replace(/[^a-z0-9]/g,'')}:${((t.artists||[]).map(a=>a.name).join('').toLowerCase().replace(/[^a-z0-9]/g,''))}`;
+          if (trackTitleArtistSeen.has(_tNorm)) continue;
+          trackTitleArtistSeen.add(_tNorm);
+          trackMap[_tk] = t;
         }
       };
       if (discRes.status === 'fulfilled') {
@@ -4322,6 +4339,7 @@ async function handleArtist(c) {
         // Collect tracks + albums from all search results, filter to this artist
         const albumMap = {};
         const topTracks = [];
+        const seenTrackIds = new Set(); // FIX: dedup tracks across all parallel search results
         const wantId = String(arData.id);
         const wantNameLow = artistName.toLowerCase();
 
@@ -4350,23 +4368,24 @@ async function handleArtist(c) {
             albumMap[key] = a;
           }
 
-          // Tracks (only from first search to avoid duplicates flooding top tracks)
-          if (res === s1) {
-            const rawTracks = data.tracks?.items || data.tracks || [];
-            for (const t of rawTracks) {
-              if (!isThisArtist(t)) continue;
-              if (topTracks.length >= 20) break;
-              topTracks.push({
-                id:         `qobuz_${t.id}`,
-                title:      t.title || 'Unknown',
-                artist:     t.performer?.name || t.artist?.name || artistName,
-                album:      t.album?.title || '',
-                duration:   t.duration || undefined,
-                artworkURL: t.album?.image?.large || cover,
-                format:     'flac',
-                source:     'qobuz',
-              });
-            }
+          // Tracks — collect from all searches, dedup by track id
+          const rawTracks = data.tracks?.items || data.tracks || [];
+          for (const t of rawTracks) {
+            if (!isThisArtist(t)) continue;
+            if (topTracks.length >= 20) break;
+            const _tkey = String(t.id);
+            if (seenTrackIds.has(_tkey)) continue; // FIX: skip already-seen track ids
+            seenTrackIds.add(_tkey);
+            topTracks.push({
+              id:         `qobuz_${t.id}`,
+              title:      t.title || 'Unknown',
+              artist:     t.performer?.name || t.artist?.name || artistName,
+              album:      t.album?.title || '',
+              duration:   t.duration || undefined,
+              artworkURL: t.album?.image?.large || cover,
+              format:     'flac',
+              source:     'qobuz',
+            });
           }
         }
 
