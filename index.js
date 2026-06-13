@@ -371,7 +371,12 @@ async function qobuzNativeStream(trackId, formatId, env) {
   const secret    = (env&&env.QOBUZ_SECRET)      || QOBUZ_SECRET;
   const cacheKey  = 'qnative:' + trackId + ':' + formatId;
   const cached    = await cacheGet(cacheKey);
-  if (cached) return cached;
+  if (cached) {
+    if (cached.url && cached.url.startsWith('/dz-proxy/') && req) {
+      try { const base = new URL(req.url); cached.url = `${base.origin}${cached.url}`; } catch {}
+    }
+    return cached;
+  }
   const ts  = Math.floor(Date.now()/1000);
   const sig = md5('trackgetFileUrlformat_id'+formatId+'intentstreamtrack_id'+trackId+ts+secret);
   const url = 'https://www.qobuz.com/api.json/0.2/track/getFileUrl' +
@@ -2151,18 +2156,26 @@ async function dzGetPremiumStreamInfo(trackId, arl, env) {
       } catch (e) { console.warn('[deezer] media.deezer.com error:', e.message); }
     }
 
-    // CDN URL reconstruction fallback
+    // CDN URL reconstruction fallback (320 first — most reliable, then FLAC, then 128)
     if (!streamUrl && MD5_ORIGIN && MEDIA_VERSION) {
+      const sngId = String(SNG_ID || trackId);
       try {
-        streamUrl    = await dzBuildCDNUrl(MD5_ORIGIN, MEDIA_VERSION, String(SNG_ID || trackId), '9');
+        streamUrl    = await dzBuildCDNUrl(MD5_ORIGIN, MEDIA_VERSION, sngId, '3');
         streamCipher = 'BF_CBC_STRIPE';
-        quality      = 'flac';
+        quality      = '320kbps';
       } catch (e2) {
+        console.warn('[deezer] CDN 320 fallback failed:', e2.message);
         try {
-          streamUrl    = await dzBuildCDNUrl(MD5_ORIGIN, MEDIA_VERSION, String(SNG_ID || trackId), '3');
+          streamUrl    = await dzBuildCDNUrl(MD5_ORIGIN, MEDIA_VERSION, sngId, '9');
           streamCipher = 'BF_CBC_STRIPE';
-          quality      = '320kbps';
-        } catch (e3) { console.error('[deezer] CDN fallback failed:', e3.message); }
+          quality      = 'flac';
+        } catch (e3) {
+          try {
+            streamUrl    = await dzBuildCDNUrl(MD5_ORIGIN, MEDIA_VERSION, sngId, '1');
+            streamCipher = 'BF_CBC_STRIPE';
+            quality      = '128kbps';
+          } catch (e4) { console.error('[deezer] All CDN fallbacks failed:', e4.message); }
+        }
       }
     }
 
@@ -2228,7 +2241,7 @@ async function deezerSearch(query) {
 }
 
 // ── deezerStream — ARL-based, with BF_CBC_STRIPE proxy or direct NONE URL ────
-async function deezerStream(trackId, env) {
+async function deezerStream(trackId, env, req) {
   const arl = env?.DEEZER_ARL || null;
   if (!arl) { console.warn('[deezer] No DEEZER_ARL env var set'); return null; }
 
@@ -2254,8 +2267,10 @@ async function deezerStream(trackId, env) {
       // BF_CBC_STRIPE — must go through /dz-proxy route for decryption
       const cdnB64  = btoa(info.url).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
       const bfParam = encodeURIComponent(info.blowfishKey);
+      const origin = req ? (() => { try { return new URL(req.url).origin; } catch { return ''; } })() : '';
+      const relPath = `/dz-proxy/${numericId}?cdn=${cdnB64}&k=${bfParam}`;
       result = {
-        url:     `/dz-proxy/${numericId}?cdn=${cdnB64}&k=${bfParam}`,
+        url:     origin ? `${origin}${relPath}` : relPath,
         format:  info.quality === 'flac' ? 'flac' : 'mp3',
         quality: info.quality,
         source:  'deezer',
@@ -2537,8 +2552,10 @@ async function handleDzProxy(c) {
   const alignOffset  = clientStart - alignedStart;
   const chunkStart   = alignedStart / 2048;
 
+  const alignedEnd = clientEnd !== null ? Math.ceil((clientEnd + 1) / 2048) * 2048 - 1 : null;
+
   let alignedRes = await fetch(cdnUrl, { headers: { ...cdnHeaders,
-    Range: clientEnd !== null ? `bytes=${alignedStart}-${clientEnd}` : `bytes=${alignedStart}-`,
+    Range: alignedEnd !== null ? `bytes=${alignedStart}-${alignedEnd}` : `bytes=${alignedStart}-`,
   }});
   if (!alignedRes.ok && alignedRes.status !== 206) return new Response('CDN error: ' + alignedRes.status, { status: 502 });
 
@@ -3536,7 +3553,7 @@ async function handleStream(c) {
             for (const dt of (dRes?.tracks || [])) {
               const _dd = (meta.duration && dt.duration) ? Math.abs(meta.duration - dt.duration) : 0;
               if (_dd > 20) continue;
-              const ds = await deezerStream(String(dt.id), c.env);
+              const ds = await deezerStream(String(dt.id), c.env, c.req);
               if (ds) { await cacheSet(streamCacheKey, { ...ds, fallback: 'deezer' }, 280); return c.json({ ...ds, fallback: 'deezer' }); }
             }
           } catch(e) { console.warn('[fb-deezer]', e.message); }
@@ -3735,7 +3752,7 @@ async function handleStream(c) {
             const dzTrack = dzRes?.tracks?.[0];
             if (dzTrack?.id) {
               const dzId = dzTrack.id.replace('deezer:', '');
-              const dzStream = await deezerStream(dzId, c.env);
+              const dzStream = await deezerStream(dzId, c.env, c.req);
               if (dzStream) { console.log(`[SC→Deezer] ${scMeta.title} → ${dzId}`); statHit('deezer'); return c.json({ ...dzStream, fallback: 'deezer' }); }
             }
           } catch(e) { console.warn('[SC→Deezer]', e.message); }
@@ -3803,7 +3820,7 @@ async function handleStream(c) {
             for (const _dt of (_dRes?.tracks || [])) {
               const _dd = (_qMeta.duration && _dt.duration) ? Math.abs(_qMeta.duration - _dt.duration) : 0;
               if (_dd > 20) continue;
-              const _ds = await deezerStream(String(_dt.id), c.env);
+              const _ds = await deezerStream(String(_dt.id), c.env, c.req);
               if (_ds) { await cacheSet(sCacheKey, { ..._ds, fallback: 'deezer' }, 280); return c.json({ ..._ds, fallback: 'deezer' }); }
             }
           } catch(e) { console.warn('[qobuz fb-deezer]', e.message); }
@@ -3957,7 +3974,7 @@ async function handleStream(c) {
 
     // Only attempt deezer addon if deezer IS in streamOrder
     if (!dzSkipDeezer) {
-      const s = await deezerStream(dzId, c.env);
+      const s = await deezerStream(dzId, c.env, c.req);
       if (s) return c.json(s);
       // Deezer failed — walk full streamOrder for best available source
       const _dzFbOrder = cfg.streamOrder && cfg.streamOrder.length
