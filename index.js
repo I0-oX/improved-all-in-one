@@ -344,6 +344,7 @@ function isrcFindBestMatch(items, query, expectedDuration) {
     if(tTitle===qNorm||(hasHyphen&&(tTitle===qLeft||tTitle===qRight)))score+=60;
     if(!hasHyphen&&thits===0&&ahits>0)score-=90;
     if(!hasHyphen&&thits===0&&qWords.length>=2)score-=40;
+    if(!hasHyphen&&thits===0&&qWords.length>=1)score=-9999; // FIX: zero title-word hits = hard reject (prevents wrong-track like Embers)
     if(!/\b(cover|karaoke|tribute|instrumental|8-bit)\b/i.test(qNorm)&&
        /\b(cover|karaoke|tribute|instrumental|8-bit)\b/i.test(t.title||''))score-=500;
     if(!/\b(live|remix|version|edit|mix)\b/i.test(qNorm)&&
@@ -529,6 +530,39 @@ async function qobuzFindBestTrack(title, artist, isrc, _env, expectedDuration) {
     console.log(`[Qobuz ISRC] no confirmed match for ${isrc} — falling back to title search`);
   }
   if (!title) return null;
+  // FIX: MusicBrainz ISRC enrichment — try to fetch ISRC if we don't have one
+  if (!isrc && title && artist) {
+    try {
+      const _mbRes = await axios.get(
+        `https://musicbrainz.org/ws/2/recording/?query=recording:${encodeURIComponent(title)}+AND+artist:${encodeURIComponent(artist)}&fmt=json&limit=3`,
+        { headers: { 'User-Agent': 'EclipseAllInOne/1.0 (eclipse-addon)' }, timeout: 4000 }
+      );
+      const _mbRec = (_mbRes.data?.recordings || [])[0];
+      const _mbIsrc = _mbRec?.isrcs?.[0];
+      if (_mbIsrc) {
+        console.log(`[MusicBrainz] enriched ISRC for "${title}" -> ${_mbIsrc}`);
+        const byMbIsrc = await qobuzFindByIsrc(_mbIsrc);
+        if (byMbIsrc) return byMbIsrc;
+        isrc = _mbIsrc; // carry ISRC forward for cache key enrichment
+      }
+    } catch(e) { /* non-fatal */ }
+  }
+  // TheAudioDB ISRC enrichment fallback
+  if (!isrc && title && artist) {
+    try {
+      const _tadbRes = await axios.get(
+        `https://www.theaudiodb.com/api/v1/json/2/searchtrack.php?s=${encodeURIComponent(artist)}&t=${encodeURIComponent(title)}`,
+        { timeout: 4000 }
+      );
+      const _tadbTrack = (_tadbRes.data?.track || [])[0];
+      const _tadbIsrc = _tadbTrack?.strMusicBrainzID;
+      if (_tadbIsrc) {
+        console.log(`[TheAudioDB] enriched ISRC for "${title}" -> ${_tadbIsrc}`);
+        const byTadbIsrc = await qobuzFindByIsrc(_tadbIsrc);
+        if (byTadbIsrc) return byTadbIsrc;
+      }
+    } catch(e) { /* non-fatal */ }
+  }
   const cacheKey = 'qmatch:' + title.toLowerCase() + ':' + (artist||'').toLowerCase();
   const cached = await cacheGet(cacheKey);
   if (cached === 'MISS') return null;
@@ -1013,6 +1047,19 @@ async function hifiAlbum(id) {
         artworkURL: cover,
         format: 'flac',
       }));
+    // FIX: cache track meta so stream handler applies correct streamOrder priority (Qobuz-first etc.)
+    for (const _rawT of rawItems.map(i => i.item || i).filter(t => t?.id)) {
+      const _rawArtist = (((_rawT.artists||[]).filter(a=>a.type==='MAIN'||a.type==='FEATURED').length
+        ? (_rawT.artists||[]).filter(a=>a.type==='MAIN'||a.type==='FEATURED')
+        : (_rawT.artists?.length ? _rawT.artists : (_rawT.artist ? [_rawT.artist] : []))
+      ).map(a=>a.name).join(', ')) || artistName;
+      cacheSet(`hifi:track:meta:${instB64}_${_rawT.id}`, {
+        title: _rawT.title || 'Unknown',
+        artist: _rawArtist,
+        isrc: _rawT.isrc ? _rawT.isrc.toUpperCase().replace(/[^A-Z0-9]/g,'') : null,
+        duration: _rawT.duration ? Math.floor(_rawT.duration) : undefined,
+      }, 3600);
+    }
     const result = {
       id,
       title: album?.title || 'Unknown Album',
@@ -2822,7 +2869,34 @@ async function handleStream(c) {
     const _hifiQIdx2 = _hifiStreamOrder.indexOf('qobuz');
     const _hifiHIdx2 = _hifiStreamOrder.indexOf('hifi');
     const _skipQobuz = _hifiQIdx2 !== -1 && _hifiHIdx2 !== -1 && _hifiHIdx2 < _hifiQIdx2;
-    const qMeta = await cacheGet(`hifi:track:meta:${trackKey}`);
+    let qMeta = await cacheGet(`hifi:track:meta:${trackKey}`);
+    // FIX: if meta not cached yet (e.g. artist/album page before our patch kicks in for old cache),
+    // do a live HiFi track info fetch to populate it so Qobuz-first logic can run
+    if (!qMeta && !_skipQobuz) {
+      try {
+        const _tkParts = trackKey.split('_');
+        const _tkInstB64 = _tkParts[0];
+        const _tkOrigId = _tkParts.slice(1).join('_');
+        const _tkInst = decodeBase64Url(_tkInstB64);
+        const _tkRes = await axios.get(`${_tkInst}/track/`, {
+          params: { id: _tkOrigId }, headers: { 'User-Agent': UA }, timeout: 5000,
+        });
+        const _tkD = _tkRes.data?.data || _tkRes.data || {};
+        const _tkT = _tkD.item || _tkD;
+        if (_tkT?.title) {
+          const _tkArtists = ((_tkT.artists||[]).filter(a=>a.type==='MAIN'||a.type==='FEATURED').length
+            ? (_tkT.artists||[]).filter(a=>a.type==='MAIN'||a.type==='FEATURED')
+            : (_tkT.artists||[])).map(a=>a.name).join(', ');
+          qMeta = {
+            title: _tkT.title,
+            artist: _tkArtists || '',
+            isrc: _tkT.isrc ? _tkT.isrc.toUpperCase().replace(/[^A-Z0-9]/g,'') : null,
+            duration: _tkT.duration ? Math.floor(_tkT.duration) : undefined,
+          };
+          cacheSet(`hifi:track:meta:${trackKey}`, qMeta, 3600);
+        }
+      } catch(e) { /* non-fatal — will fall through to native HiFi */ }
+    }
     if (!_skipQobuz && (qMeta?.title || qMeta?.isrc)) {
       try {
         const qTrack = await qobuzFindBestTrack(qMeta.title, qMeta.artist, qMeta.isrc || null, c.env, qMeta.duration);
@@ -2854,7 +2928,7 @@ async function handleStream(c) {
     if (meta?.title && meta?.artist) {
       const _fbOrder = (_hifiStreamOrder.length
         ? _hifiStreamOrder.filter(s => s !== 'hifi')
-        : ['qobuz', 'deezer', 'sc']
+        : ['qobuz', 'deezer', 'sc'] // FIX: explicit default when no streamOrder configured
       );
       console.log(`[stream fallback] HiFi failed for "${meta.title}", trying: ${_fbOrder.join(',')}`);
       for (const _fb of _fbOrder) {
@@ -3003,6 +3077,7 @@ async function handleStream(c) {
               title: _lt.publisher_metadata?.title || _lt.title,
               artist: _lt.publisher_metadata?.artist || _lt.user?.name || _lt.user?.username || '',
               isrc: _lt.publisher_metadata?.isrc || null,
+              duration: _lt.duration ? Math.floor(_lt.duration / 1000) : undefined, // FIX: was missing, caused fallback dur checks to always use 0
             };
             cacheSet(`sc:meta:${origId}`, scMeta, 3600);
             upstashCmd(c.env, 'SET', `sc:meta:${origId}`, JSON.stringify(scMeta), 'EX', 86400).catch(()=>{});
@@ -3030,6 +3105,8 @@ async function handleStream(c) {
         if (_tryQobuz) _fbSources.push('qobuz');
         if (_tryHifi)  _fbSources.push('hifi');
         if (_tryDeezer)_fbSources.push('deezer');
+        // FIX: if all three flags were false (misconfigured cfg), force a default order so fallback always runs
+        if (!_fbSources.length) { _fbSources.push('qobuz', 'hifi', 'deezer'); }
       }
       console.log(`[SC fallback] ${origId} snipped — trying [${_fbSources.join(',')}] for ${scMeta.title}`);
       for (const _fbSrc of _fbSources) {
@@ -4035,6 +4112,20 @@ async function handleArtist(c) {
           source:     'hifi',
         }));
 
+      // FIX: cache track meta for ALL tracks so stream handler can apply correct streamOrder priority
+      for (const [_atid, _atv] of Object.entries(trackMap)) {
+        if (_atv.streamReady === false) continue;
+        const _atArtist = (((_atv.artists||[]).filter(a=>a.type==='MAIN'||a.type==='FEATURED').length
+          ? (_atv.artists||[]).filter(a=>a.type==='MAIN'||a.type==='FEATURED')
+          : (_atv.artists?.length ? _atv.artists : (_atv.artist ? [_atv.artist] : []))
+        ).map(a=>a.name).join(', ')) || artistName;
+        cacheSet(`hifi:track:meta:${instB64}_${_atid}`, {
+          title: _atv.title || 'Unknown',
+          artist: _atArtist,
+          isrc: _atv.isrc ? _atv.isrc.toUpperCase().replace(/[^A-Z0-9]/g,'') : null,
+          duration: _atv.duration ? Math.floor(_atv.duration) : undefined,
+        }, 3600);
+      }
       const result = { id, name: artistName, artworkURL, topTracks, albums };
       await cacheSet(cacheKey, result, 3600);
       return c.json(result);
