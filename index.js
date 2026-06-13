@@ -2884,16 +2884,17 @@ async function handleStream(c) {
     const cachedStream = await cacheGet(streamCacheKey);
     if (cachedStream) return c.json(cachedStream);
 
-    // ── Qobuz Hi-Res FIRST (unless hifi is ranked higher in streamOrder) ─────
     const trackKey = id.slice(5); // strip 'hifi_' -> instB64_origId
     const _hifiStreamOrder = cfg.streamOrder && cfg.streamOrder.length ? cfg.streamOrder : [];
-    const _hifiQIdx2 = _hifiStreamOrder.indexOf('qobuz');
     const _hifiHIdx2 = _hifiStreamOrder.indexOf('hifi');
-    const _skipQobuz = _hifiQIdx2 !== -1 && _hifiHIdx2 !== -1 && _hifiHIdx2 < _hifiQIdx2;
+    const _hifiQIdx2 = _hifiStreamOrder.indexOf('qobuz');
+    // If streamOrder is set and hifi is NOT in it (e.g. deezer-only), skip hifi entirely
+    const _hifiSkipSelf = _hifiStreamOrder.length > 0 && _hifiHIdx2 === -1;
+    // Skip qobuz-first if hifi is skipped, OR hifi ranks higher than qobuz
+    const _skipQobuz = _hifiSkipSelf || (_hifiQIdx2 !== -1 && _hifiHIdx2 !== -1 && _hifiHIdx2 < _hifiQIdx2);
     let qMeta = await cacheGet(`hifi:track:meta:${trackKey}`);
-    // FIX: if meta not cached yet (e.g. artist/album page before our patch kicks in for old cache),
-    // do a live HiFi track info fetch to populate it so Qobuz-first logic can run
-    if (!qMeta && !_skipQobuz) {
+    // FIX: if meta not cached yet, do a live HiFi track info fetch to populate it
+    if (!_hifiSkipSelf && !qMeta && !_skipQobuz) {
       try {
         const _tkParts = trackKey.split('_');
         const _tkInstB64 = _tkParts[0];
@@ -2919,7 +2920,7 @@ async function handleStream(c) {
         }
       } catch(e) { /* non-fatal — will fall through to native HiFi */ }
     }
-    if (!_skipQobuz && (qMeta?.title || qMeta?.isrc)) {
+    if (!_hifiSkipSelf && !_skipQobuz && (qMeta?.title || qMeta?.isrc)) {
       try {
         const qTrack = await qobuzFindBestTrack(qMeta.title, qMeta.artist, qMeta.isrc || null, c.env, qMeta.duration);
         if (qTrack && qTrack.id) {
@@ -2936,16 +2937,16 @@ async function handleStream(c) {
         console.warn('[Qobuz] error:', e.message);
       }
     }
-    // ── HiFi fallback ─────────────────────────────────────────────────────────
-
-    const data = await hifiStream(id, cfg.hifiInstances, cfg.preferredQuality);
-    if (data) {
-      // Cache stream URLs for 5 minutes (short TTL — they expire)
-      await cacheSet(streamCacheKey, data, 280);
-      return c.json(data);
+    // ── HiFi direct stream (skipped if hifi not in streamOrder) ─────────────
+    if (!_hifiSkipSelf) {
+      const data = await hifiStream(id, cfg.hifiInstances, cfg.preferredQuality);
+      if (data) {
+        await cacheSet(streamCacheKey, data, 280);
+        return c.json(data);
+      }
     }
 
-    // HiFi failed — walk full streamOrder fallback chain
+    // HiFi failed or skipped — walk full streamOrder fallback chain
     const meta = await cacheGet(`hifi:track:meta:${trackKey}`);
     if (meta?.title && meta?.artist) {
       const _fbOrder = (_hifiStreamOrder.length
@@ -3019,6 +3020,10 @@ async function handleStream(c) {
     const cachedScStream = await cacheGet(scStreamCacheKey);
     if (cachedScStream) return c.json(cachedScStream);
 
+    // If streamOrder is set and sc is NOT in it (e.g. deezer-only), skip sc entirely
+    const _scSelfOrder = cfg.streamOrder && cfg.streamOrder.length ? cfg.streamOrder : [];
+    const _scSkipSelf = _scSelfOrder.length > 0 && !_scSelfOrder.includes('sc');
+
     // Respect streamOrder — if user put qobuz/hifi before sc, try those first
     let scMeta0 = await cacheGet(`sc:meta:${origId}`);
     if (!scMeta0) {
@@ -3036,7 +3041,7 @@ async function handleStream(c) {
     // FIX: ISRC-gate — only upgrade SC tracks that have a confirmed ISRC.
     // Without ISRC, qobuzFindBestTrack does fuzzy title/artist search which matches wrong tracks
     // on SC-exclusive / indie content. If no ISRC, always play natively on SC.
-    if (scMeta0?.title && scMeta0?.isrc && _qIdx !== -1 && (_scIdx === -1 || _qIdx < _scIdx) && !cfg.noQobuz) {
+    if (!_scSkipSelf && scMeta0?.title && scMeta0?.isrc && _qIdx !== -1 && (_scIdx === -1 || _qIdx < _scIdx) && !cfg.noQobuz) {
       try {
         const qTrack = await qobuzFindBestTrack(scMeta0.title, scMeta0.artist, scMeta0.isrc, c.env, scMeta0.duration);
         if (qTrack?.id) {
@@ -3058,7 +3063,7 @@ async function handleStream(c) {
     }
 
     // Try HiFi/Tidal before SC if hifi is ranked higher than sc — also ISRC-gated
-    if (scMeta0?.title && scMeta0?.isrc && _hIdx !== -1 && (_scIdx === -1 || _hIdx < _scIdx) && !cfg.noHifi) {
+    if (!_scSkipSelf && scMeta0?.title && scMeta0?.isrc && _hIdx !== -1 && (_scIdx === -1 || _hIdx < _scIdx) && !cfg.noHifi) {
       try {
         const hifiRes = await hifiSearch(`${scMeta0.artist} ${scMeta0.title}`, cfg.hifiInstances);
         const hifiTracks = Array.isArray(hifiRes) ? hifiRes : (hifiRes?.tracks || []);
@@ -3076,13 +3081,16 @@ async function handleStream(c) {
       } catch(e) { console.warn('[SC→HiFi priority]', e.message); }
     }
 
-    const data = await scStream(origId, cfg.scClientId);
-    if (data) {
-      const { _scSnipped, ...cleanData } = data;
-      await cacheSet(scStreamCacheKey, cleanData, 280);
-      return c.json(cleanData);
+    // Skip primary scStream if sc not in streamOrder
+    if (!_scSkipSelf) {
+      const data = await scStream(origId, cfg.scClientId);
+      if (data) {
+        const { _scSnipped, ...cleanData } = data;
+        await cacheSet(scStreamCacheKey, cleanData, 280);
+        return c.json(cleanData);
+      }
     }
-    // SC returned null (snipped/blocked) — try HiFi then DAB as fallback
+    // SC failed or skipped — try fallback sources
     let scMeta = scMeta0; // reuse already-fetched meta (includes Upstash lookup)
     if (!scMeta) {
       try {
@@ -3197,14 +3205,19 @@ async function handleStream(c) {
     const sCacheKey = `stream:url:${id}`;
     const cachedQStream = await cacheGet(sCacheKey);
     if (cachedQStream) return c.json(cachedQStream);
-    try {
-      const result = await qobuzStream(qobuzId, c.env);
-      if (result) {
-        await cacheSet(sCacheKey, result, 280);
-        return c.json(result);
-      }
-    } catch(e) { console.warn('[qobuz direct stream]', e.message); }
-    // Qobuz failed — try HiFi then SC as ordered fallback
+    // If streamOrder is set and qobuz is NOT in it (e.g. deezer-only), skip qobuz entirely
+    const _qSelfOrder = cfg.streamOrder && cfg.streamOrder.length ? cfg.streamOrder : [];
+    const _qSkipSelf = _qSelfOrder.length > 0 && !_qSelfOrder.includes('qobuz');
+    if (!_qSkipSelf) {
+      try {
+        const result = await qobuzStream(qobuzId, c.env);
+        if (result) {
+          await cacheSet(sCacheKey, result, 280);
+          return c.json(result);
+        }
+      } catch(e) { console.warn('[qobuz direct stream]', e.message); }
+    }
+    // Qobuz failed or skipped — try fallback sources as ordered
     const _qMeta = await cacheGet(`qobuz:track:meta:${qobuzId}`);
     if (_qMeta?.title) {
       // FIX: only fall back to sources in streamOrder when it's explicitly set
