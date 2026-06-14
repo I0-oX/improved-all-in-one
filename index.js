@@ -384,7 +384,7 @@ async function qobuzNativeStream(trackId, formatId, env) {
     '&track_id='+trackId+'&format_id='+formatId+
     '&intent=stream&request_ts='+ts+'&request_sig='+sig;
   const ctrl=new AbortController();
-  const timer=setTimeout(()=>ctrl.abort(),10000);
+  const timer=setTimeout(()=>ctrl.abort(),4000); // FIX: was 10000 — 4s sufficient for URL fetch; prevents blocking fallback chain for 10s on slow/unavailable instances
   try {
     const r=await fetch(url,{headers:{'User-Agent':UA},signal:ctrl.signal});
     clearTimeout(timer);
@@ -514,8 +514,12 @@ async function qobuzFindByIsrc(isrc) {
     try {
       const r = await qobuzGet(inst + '/search', { q: isrc, limit: 5 }, 8000);
       const items = (r.data && r.data.tracks && r.data.tracks.items) ? r.data.tracks.items : [];
-      // STRICT: only accept a result if Qobuz confirms the ISRC matches exactly
-      const match = items.find(t => t.isrc && normIsrc(t.isrc) === wantIsrc);
+      // FIX: accept exact ISRC match OR single-result high-confidence (Qobuz sometimes
+      // omits/reformats the ISRC field in the search response even when it's the correct track,
+      // causing the "no confirmed match" → serial title-search fallback on every call (+1.3s).
+      // If Qobuz returns exactly 1 result for an ISRC query it's almost certainly right.
+      const _exactIsrcMatch = items.find(t => t.isrc && normIsrc(t.isrc) === wantIsrc);
+      const match = _exactIsrcMatch || (items.length === 1 && items[0] && items[0].id ? items[0] : null);
       if (match && match.id) {
         await cacheSet(cacheKey, match, 86400); // confirmed ISRC match — cache 24h
         console.log(`[Qobuz ISRC] HIT ${isrc} -> id=${match.id} "${match.title}"`);
@@ -3023,50 +3027,56 @@ async function handleSearch(c) {
 
   // ── Canonical dedup ─────────────────────────────────────────────────────────
   // Key priority: ISRC (exact) → title+artist+year+duration-bucket (fuzzy, ±2 s)
-  const _normStr = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 60);
+  const _normStr = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, ''); // FIX: removed .slice(0,60) truncation — caused long-title false collisions
 
   const _canonKey = item => {
     if (item.isrc) {
       const _ni = String(item.isrc).toUpperCase().replace(/[^A-Z0-9]/g, '');
-      if (_ni.length >= 12) return 'isrc:' + _ni; // only trust well-formed ISRCs (12 chars)
+      if (_ni.length >= 12) return 'isrc:' + _ni;
     }
     const t  = _normStr(item.title  || '');
-    const a  = _normStr((item.artist || '').split(/[,&]/)[0]);
-    // Year excluded from key: sources report it inconsistently.
-    // ISRC is the primary exact key; title+artist is sufficient fallback.
-    if (!t && !a) return null; // don't dedup unknown tracks against each other
+    // FIX: use first-word-only artist key so cross-source artist name differences
+    // don't produce different keys for the same track.
+    // e.g. HiFi "Tyler, the Creator" → "tyler", Qobuz "Tyler The Creator" → "tyler" ✓
+    // e.g. Deezer "Tyler, The Creator feat. Kali Uchis" → split on [,&(] → "Tyler The Creator" → "tyler" ✓
+    const _artistRaw = String(item.artist || '').split(/[,&(]/)[0].trim();
+    const a = _normStr(_artistRaw.split(/\s+/)[0] || _artistRaw);
+    if (!t && !a) return null;
     return 'ta:' + t + '|' + a;
   };
 
   const _canonAlbKey = item => {
     const t = _normStr(item.title  || '');
-    const a = _normStr((item.artist || '').split(/[,&]/)[0]);
-    // Year intentionally excluded: sources report it inconsistently (0, null, undefined, actual year)
-    // which caused the same album from different sources to get different keys and appear as dupes.
-    // title+artist is sufficient to identify the same album across Tidal/Qobuz/Deezer/SC.
+    // FIX: first-word artist for cross-source album dedup consistency
+    const _aRaw = String(item.artist || '').split(/[,&(]/)[0].trim();
+    const a = _normStr(_aRaw.split(/\s+/)[0] || _aRaw);
     return 'alb:' + t + '|' + a;
   };
 
   const interleave = (sourceLists) => {
     const result = [], seenIds = new Set(), seenKeys = new Set();
-    // seenKeyDur: first-seen duration per canon key.
-    // Same title+artist but duration >15s apart = genuinely different track.
     const seenKeyDur = new Map();
+    // FIX: title-only secondary dedup — catches the same track when artist strings differ
+    // across sources (e.g. HiFi "Tyler, the Creator" vs SC "tylerthecreator").
+    // Only suppresses when duration also matches within 8s to avoid blocking legitimate
+    // same-title different-artist tracks (e.g. "Hurt" by NIN vs Johnny Cash).
+    const seenTitleDur = new Map();
+    const _tk = item => {
+      const t = _normStr(item.title || '');
+      return (t.length >= 5) ? ('t:' + t) : null;
+    };
     const maxLen = Math.max(0, ...sourceLists.map(l => l.length));
     for (let i = 0; i < maxLen; i++) {
       for (const list of sourceLists) {
         if (i >= list.length) continue;
         const item = list[i];
         if (!item) continue;
-        const ik = item.id, ck = _canonKey(item);
+        const ik = item.id, ck = _canonKey(item), tk = _tk(item);
         if (ik && seenIds.has(ik)) continue;
         if (ck && seenKeys.has(ck)) {
           const prevDur = seenKeyDur.get(ck) || 0;
           const curDur  = (item.duration && item.duration > 5) ? item.duration : 0;
-          // Only treat as a genuinely different track if durations differ by >30s
-          // (e.g. radio edit 3:30 vs full album version 7:15).
-          // FIX: was 15s which caused remixes/extended versions to leak through as dupes.
-          // Also FIX: now properly marks seenKeys so a 3rd occurrence can't re-enter.
+          // Only allow as a distinct alt-version if duration differs by >30s
           if (prevDur > 10 && curDur > 10 && Math.abs(prevDur - curDur) > 30) {
             if (ik) seenIds.add(ik);
             seenKeys.add(ck + ':alt' + result.length);
@@ -3074,10 +3084,19 @@ async function handleSearch(c) {
           }
           continue;
         }
+        // Title+duration secondary dedup for cross-source artist-name mismatches
+        if (tk && seenTitleDur.has(tk)) {
+          const prevTDur = seenTitleDur.get(tk);
+          const curDur   = (item.duration && item.duration > 5) ? item.duration : 0;
+          if (prevTDur > 10 && curDur > 10 && Math.abs(prevTDur - curDur) <= 8) continue;
+        }
         if (ik) seenIds.add(ik);
         if (ck) {
           seenKeys.add(ck);
           if (item.duration && item.duration > 5) seenKeyDur.set(ck, item.duration);
+        }
+        if (tk && item.duration && item.duration > 5 && !seenTitleDur.has(tk)) {
+          seenTitleDur.set(tk, item.duration);
         }
         result.push(item);
       }
