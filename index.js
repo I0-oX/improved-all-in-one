@@ -1,5 +1,5 @@
 /**
- * Eclipse Addon
+ * Eclipse Universal Addon
  * Sources (in priority order):
  *   MUSIC:    HiFi instances → SoundCloud → Internet Archive
  *   PODCASTS: Podcast Index → Taddy → Apple Podcasts
@@ -214,7 +214,6 @@ function getConfig(c) {
 // ─── SoundCloud Client ID Auto-Discovery ─────────────────────────────────────
 let _scClientIdCache = null;
 let _scClientIdExpiry = 0;
-const _hifiBlacklist530 = new Map();
 
 async function getSCClientId(providedId) {
   if (providedId) return providedId;
@@ -953,9 +952,7 @@ async function hifiStream(id, extraInstances, preferredQuality) {
   // Each tier is tried fully before falling to the next, so LOSSLESS is always
   // attempted before HIGH or LOW (fixes the bug where LOW won the race).
   async function tryInstance(inst, ql) {
-    // Skip instances recently blacklisted due to Cloudflare 530 (origin unreachable)
-    const _blExp = _hifiBlacklist530.get(inst);
-    if (_blExp && Date.now() < _blExp) return null;
+    // FIX: 2s per-instance timeout — slow instances drop out fast in Promise.any race
     try {
       const r = await axios.get(`${inst}/track/`, {
         params: { id: origId, quality: ql },
@@ -967,13 +964,8 @@ async function hifiStream(id, extraInstances, preferredQuality) {
     } catch (e) {
       const status = e.response?.status;
       const msg = e.response?.data?.userMessage || e.response?.data?.error || e.message;
-      if (status === 530) {
-        // Cloudflare reports origin unreachable — blacklist this instance for 60s
-        _hifiBlacklist530.set(inst, Date.now() + 60_000);
-        console.warn(`[HiFi stream] ${inst} returned 530 — blacklisted 60s`);
-      } else if (status !== 403 && status !== 404 && status !== 401) {
+      if (status !== 403 && status !== 404 && status !== 401)
         console.warn(`[HiFi stream] ${inst}/track/ ql=${ql} -> ${status || 'ERR'}: ${msg}`);
-      }
     }
     return null;
   }
@@ -983,23 +975,22 @@ async function hifiStream(id, extraInstances, preferredQuality) {
   const pref = preferredQuality && ALL_QUALITIES.includes(preferredQuality) ? preferredQuality : 'LOSSLESS';
   const qualityOrder = [pref, ...ALL_QUALITIES.filter(q => q !== pref)];
 
-  // Two-phase race strategy:
-  // Phase 1 — race preferred quality across the TOP 3 instances simultaneously.
-  //            Whichever hits first wins; the others are abandoned. Fast path.
-  // Phase 2 — if all top 3 miss, race ALL instances × ALL quality tiers at once.
-  const _top3 = instanceOrder.slice(0, 3);
+  // FIX: Two-phase race strategy to minimize latency:
+  // Phase 1 — race preferred quality across ALL instances simultaneously (2s window).
+  // Phase 2 — if phase 1 yields nothing, race ALL remaining qualities × ALL instances at once.
+  // This caps worst-case at ~4s (was up to 9s with sequential per-tier loops).
   try {
     const winner = await Promise.any(
-      _top3.map(inst =>
+      instanceOrder.map(inst =>
         tryInstance(inst, qualityOrder[0]).then(r => {
           if (!r) throw new Error('no result');
           return r;
         })
       )
     );
-    console.log(`[HiFi stream] top3-race winner quality=${qualityOrder[0]} trackId=${origId}`);
+    console.log(`[HiFi stream] phase1 winner quality=${qualityOrder[0]} trackId=${origId}`);
     return winner;
-  } catch { /* top 3 all failed on preferred quality — fall to phase 2 */ }
+  } catch { /* phase 1 failed — all instances timed out or errored on preferred quality */ }
 
   // Phase 2: race ALL remaining quality tiers × ALL instances simultaneously
   const phase2Promises = [];
@@ -2149,6 +2140,7 @@ async function dzGetPremiumStreamInfo(trackId, arl, env) {
     if (!song?.MD5_ORIGIN) return null;
 
     const { MD5_ORIGIN, MEDIA_VERSION, SNG_ID, TRACK_TOKEN } = song;
+    const trackIsrc = song.ISRC || song.isrc || null;
     const blowfishKey = dzGetBlowfishKey(String(SNG_ID || trackId));
     let streamUrl = null, streamCipher = 'BF_CBC_STRIPE', quality = '320kbps';
 
@@ -2221,11 +2213,11 @@ async function dzGetPremiumStreamInfo(trackId, arl, env) {
 
     // Cache in Upstash (4min TTL)
     try {
-      await upstashCmd(env, 'SET', redisCacheKey, JSON.stringify({ url: streamUrl, cipher: streamCipher, blowfishKey, quality }), 'EX', 240);
+      await upstashCmd(env, 'SET', redisCacheKey, JSON.stringify({ url: streamUrl, cipher: streamCipher, blowfishKey, quality, isrc: trackIsrc }), 'EX', 240);
     } catch {}
 
     const expiresAt = Date.now() + 240_000;
-    return { url: streamUrl, cipher: streamCipher, blowfishKey, quality, expiresAt };
+    return { url: streamUrl, cipher: streamCipher, blowfishKey, quality, expiresAt, isrc: trackIsrc };
   } catch (e) {
     console.error('[deezer] getPremiumStreamInfo fatal:', e.message);
     return null;
@@ -2249,20 +2241,12 @@ async function deezerSearch(query) {
     const rawAlbums    = albumRes.status    === 'fulfilled' ? (albumRes.value.data?.data    || []) : [];
     const rawArtists   = artistRes.status   === 'fulfilled' ? (artistRes.value.data?.data   || []) : [];
     const rawPlaylists = playlistRes.status === 'fulfilled' ? (playlistRes.value.data?.data || []) : [];
-    const tracks = rawTracks.slice(0, 20).map(t => {
-      cacheSet(`dz:track:meta:${t.id}`, {
-        title:    t.title        || '',
-        artist:   t.artist?.name || '',
-        isrc:     t.isrc ? String(t.isrc).toUpperCase().replace(/[^A-Z0-9]/g, '') : null,
-        duration: t.duration     || undefined,
-      }, 3600);
-      return {
-        id: `deezer:${t.id}`, title: t.title || 'Unknown', artist: t.artist?.name || 'Unknown',
-        album: t.album?.title || '', duration: t.duration || undefined,
-        artworkURL: t.album?.cover_xl || t.album?.cover_big || t.album?.cover || null,
-        format: 'mp3', source: 'deezer',
-      };
-    });
+    const tracks = rawTracks.slice(0, 20).map(t => ({
+      id: `deezer:${t.id}`, title: t.title || 'Unknown', artist: t.artist?.name || 'Unknown',
+      album: t.album?.title || '', duration: t.duration || undefined,
+      artworkURL: t.album?.cover_xl || t.album?.cover_big || t.album?.cover || null,
+      format: 'mp3', source: 'deezer', isrc: t.isrc || null,
+    }));
     const albums = rawAlbums.slice(0, 8).map(a => ({
       id: `deezer:album:${a.id}`, title: a.title || 'Unknown Album', artist: a.artist?.name || 'Unknown',
       artworkURL: a.cover_xl || a.cover_big || a.cover || null, year: safeYear(a.release_date), source: 'deezer',
@@ -2277,30 +2261,6 @@ async function deezerSearch(query) {
       artworkURL: p.picture_xl || p.picture_big || p.picture || null,
       trackCount: p.nb_tracks || undefined, source: 'deezer',
     }));
-    // Re-rank Deezer tracks to prevent wrong-artist/wrong-track matches
-    if (tracks.length > 1) {
-      const scored = tracks.map(t => {
-        const qNorm   = normalizeStr(query);
-        const tTitle  = normalizeStr(t.title);
-        const tArtist = normalizeStr(t.artist);
-        const qWords  = qNorm.replace(/[^a-z0-9]/gi, ' ').split(' ').filter(w => w.length > 1);
-        const hasHyphen = / - /.test(qNorm);
-        const thits = qWords.filter(w => tTitle.includes(w)).length;
-        const ahits = qWords.filter(w => tArtist.includes(w)).length;
-        let s = thits * 15 + ahits * 8;
-        if (thits > 0 && ahits > 0) s += 80;
-        if (tTitle === qNorm) s += 60;
-        if (!hasHyphen && thits === 0 && ahits > 0)          s -= 90;
-        if (!hasHyphen && thits === 0 && qWords.length >= 2)  s -= 40;
-        if (!hasHyphen && thits === 0 && qWords.length <= 1)  s -= 9999;
-        if (!/cover|karaoke|tribute/i.test(qNorm) && /cover|karaoke|tribute/i.test(t.title)) s -= 500;
-        if (!/live|remix|version|edit/i.test(qNorm) && /live|remix|version|edit/i.test(t.title)) s -= 50;
-        return { t, s };
-      });
-      scored.sort((a, b) => b.s - a.s);
-      tracks.length = 0;
-      scored.forEach(x => tracks.push(x.t));
-    }
     const result = { tracks, albums, artists, playlists };
     await cacheSet(cacheKey, result, 300);
     return result;
@@ -2310,19 +2270,83 @@ async function deezerSearch(query) {
   }
 }
 
+
+// ── deezerFindByIsrc — ISRC exact lookup via public Deezer API ───────────────
+async function deezerFindByIsrc(isrc) {
+  if (!isrc) return null;
+  const normIsrc = String(isrc).toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!normIsrc) return null;
+  const cacheKey = `dzisrc:${normIsrc}`;
+  const cached = await cacheGet(cacheKey);
+  if (cached === 'MISS') return null;
+  if (cached) return cached;
+  try {
+    const r = await axios.get(`${DEEZER_API}/search/track`, {
+      params: { q: `isrc:${normIsrc}`, limit: 5 },
+      headers: { 'User-Agent': UA },
+      timeout: 6000,
+    });
+    const items = r.data?.data || [];
+    const match = items.find(t =>
+      t.isrc && t.isrc.toUpperCase().replace(/[^A-Z0-9]/g, '') === normIsrc
+    );
+    if (match) {
+      const result = {
+        id: `deezer:${match.id}`,
+        numericId: String(match.id),
+        title: match.title || 'Unknown',
+        artist: match.artist?.name || 'Unknown',
+        album: match.album?.title || '',
+        duration: match.duration || undefined,
+        artworkURL: match.album?.cover_xl || match.album?.cover_big || null,
+        isrc: normIsrc,
+        source: 'deezer',
+      };
+      await cacheSet(cacheKey, result, 86400);
+      console.log(`[Deezer ISRC] HIT ${normIsrc} -> id=${match.id} "${match.title}"`);
+      return result;
+    }
+    await cacheSet(cacheKey, 'MISS', 1800);
+    console.log(`[Deezer ISRC] no confirmed match for ${normIsrc}`);
+    return null;
+  } catch (e) {
+    console.warn('[Deezer ISRC] lookup error:', e.message);
+    return null;
+  }
+}
+
 // ── deezerStream — ARL-based, with BF_CBC_STRIPE proxy or direct NONE URL ────
-async function deezerStream(trackId, env, req) {
+async function deezerStream(trackId, env, req, expectedIsrc = null) {
   const arl = env?.deezerArl || env?.DEEZER_ARL || null;
   if (!arl) { console.warn('[deezer] No DEEZER_ARL configured'); return null; }
 
   const numericId = decodeURIComponent(String(trackId || '')).replace(/^deezer(?::|%3A)/i, '');
   const cacheKey  = `dz:stream:result:${numericId}`;
   const cached    = await cacheGet(cacheKey);
-  if (cached) return cached;
+  if (cached) {
+    if (expectedIsrc && cached.isrc) {
+      const cachedIsrc = String(cached.isrc).toUpperCase().replace(/[^A-Z0-9]/g, '');
+      const wantIsrc   = String(expectedIsrc).toUpperCase().replace(/[^A-Z0-9]/g, '');
+      if (cachedIsrc && cachedIsrc !== wantIsrc) {
+        console.warn(`[Deezer stream] ISRC mismatch in cache for ${numericId}: got ${cachedIsrc}, want ${wantIsrc} — busting cache`);
+        // fall through to re-fetch
+      } else { return cached; }
+    } else { return cached; }
+  }
 
   try {
     const info = await dzGetPremiumStreamInfo(numericId, arl, env);
     if (!info?.url) return null;
+
+    // ISRC validation gate — reject if Deezer returned a different track
+    if (expectedIsrc && info.isrc) {
+      const gotIsrc  = String(info.isrc).toUpperCase().replace(/[^A-Z0-9]/g, '');
+      const wantIsrc = String(expectedIsrc).toUpperCase().replace(/[^A-Z0-9]/g, '');
+      if (gotIsrc && gotIsrc !== wantIsrc) {
+        console.warn(`[Deezer stream] ISRC mismatch: track ${numericId} has ${gotIsrc}, expected ${wantIsrc} — rejecting`);
+        return null;
+      }
+    }
 
     let result;
     if (info.cipher === 'NONE') {
@@ -2332,6 +2356,7 @@ async function deezerStream(trackId, env, req) {
         format:  info.quality === 'flac' ? 'flac' : 'mp3',
         quality: info.quality,
         source:  'deezer',
+        isrc:    info.isrc || null,
       };
     } else {
       // BF_CBC_STRIPE — must go through /dz-proxy route for decryption
@@ -2344,6 +2369,7 @@ async function deezerStream(trackId, env, req) {
         format:  info.quality === 'flac' ? 'flac' : 'mp3',
         quality: info.quality,
         source:  'deezer',
+        isrc:    info.isrc || null,
       };
       // Store stream info in memory cache so /dz-proxy can re-use it
       _dzStreamSet(numericId, info);
@@ -2371,20 +2397,12 @@ async function deezerAlbum(albumId) {
     const rawTracks = tracksRes.status === 'fulfilled' ? (tracksRes.value.data?.data || []) : [];
     const artworkURL = meta.cover_xl || meta.cover_big || meta.cover || null;
     const artistName = meta.artist?.name || 'Unknown';
-    const tracks = rawTracks.map((t, i) => {
-      cacheSet(`dz:track:meta:${t.id}`, {
-        title:    t.title        || '',
-        artist:   t.artist?.name || artistName || '',
-        isrc:     t.isrc ? String(t.isrc).toUpperCase().replace(/[^A-Z0-9]/g, '') : null,
-        duration: t.duration     || undefined,
-      }, 3600);
-      return {
-        id: `deezer:${t.id}`, title: t.title || 'Unknown',
-        artist: t.artist?.name || artistName, album: meta.title || '',
-        duration: t.duration || undefined, artworkURL, format: 'mp3', source: 'deezer',
-        trackNumber: t.track_position || (i + 1),
-      };
-    });
+    const tracks = rawTracks.map((t, i) => ({
+      id: `deezer:${t.id}`, title: t.title || 'Unknown',
+      artist: t.artist?.name || artistName, album: meta.title || '',
+      duration: t.duration || undefined, artworkURL, format: 'mp3', source: 'deezer',
+      trackNumber: t.track_position || (i + 1),
+    }));
     const result = {
       id: `deezer:album:${albumId}`, title: meta.title || 'Unknown Album',
       artist: artistName, artworkURL, year: safeYear(meta.release_date), tracks,
@@ -3305,11 +3323,9 @@ async function handleAudiobookSearch(c) {
   const cached = await cacheGet(cacheKey);
   if (cached) return c.json(cached);
 
-  // Only run LibriVox/IA searches for clearly audiobook-related queries to save CF subrequest budget
-  const _looksLikeAudiobook = /audiobook|librivox|chapter|narrator|unabridged/i.test(query);
   const [lvoxAlbums, iaBookAlbums] = await Promise.allSettled([
-    _looksLikeAudiobook ? librivoxSearch(query) : Promise.resolve([]),
-    _looksLikeAudiobook ? iaSearchAudiobooks(query) : Promise.resolve([]),
+    librivoxSearch(query),
+    iaSearchAudiobooks(query),
   ]);
 
   const get = r => (r.status === 'fulfilled' ? r.value : null) || [];
@@ -4030,6 +4046,20 @@ async function handleStream(c) {
     const dzArtist2 = dzArtist || _dzCachedMeta?.artist || '';
     const dzIsrc    = dzIsrc0  || _dzCachedMeta?.isrc   || null;
 
+    // ISRC fast path: confirm correct Deezer track ID via public API before streaming
+    if (dzIsrc && !dzSkipDeezer) {
+      try {
+        const dzByIsrc = await deezerFindByIsrc(dzIsrc);
+        if (dzByIsrc?.numericId && dzByIsrc.numericId !== dzId) {
+          console.log(`[Deezer ISRC fast path] ISRC ${dzIsrc} maps to id=${dzByIsrc.numericId}, not ${dzId} — using confirmed ID`);
+          const confirmedStream = await deezerStream(dzByIsrc.numericId, c.env, c.req, dzIsrc);
+          if (confirmedStream) return c.json(confirmedStream);
+        } else if (dzByIsrc?.numericId && dzByIsrc.numericId === dzId) {
+          console.log(`[Deezer ISRC fast path] ISRC ${dzIsrc} confirmed -> id=${dzId}`);
+        }
+      } catch (e) { console.warn('[Deezer ISRC fast path]', e.message); }
+    }
+
     // FIX: when streamOrder is set and non-empty, treat any source NOT in it as disabled.
     // e.g. streamOrder=['deezer'] → qobuz/hifi/sc are all implicitly excluded,
     // even if cfg.noQobuz etc. aren't explicitly true.
@@ -4076,7 +4106,7 @@ async function handleStream(c) {
 
     // Deezer IS in streamOrder (or no explicit order) — try it directly first
     if (!dzSkipDeezer) {
-      const s = await deezerStream(dzId, c.env, c.req);
+      const s = await deezerStream(dzId, c.env, c.req, dzIsrc);
       if (s) return c.json(s);
       console.log(`[Deezer direct] stream failed for ${dzId} — falling back to upgrade sources`);
       // Deezer failed — walk full streamOrder for best available source
@@ -4091,7 +4121,7 @@ async function handleStream(c) {
         if (_fbSrc === 'qobuz' && !_dzEffNoQobuz) {
           try {
             const qTrack = dzIsrc
-              ? (await qobuzFindByIsrc(dzIsrc) || await qobuzFindBestTrack(dzTitle2, dzArtist2, dzIsrc, c.env))
+              ? await qobuzFindByIsrc(dzIsrc)
               : (dzTitle2 ? await qobuzFindBestTrack(dzTitle2, dzArtist2, null, c.env) : null);
             if (qTrack?.id) {
               const qStream = await qobuzStream(qTrack.id, c.env, cfg.preferredQuality);
@@ -4103,9 +4133,7 @@ async function handleStream(c) {
           try {
             const hifiRes = await hifiSearch(`${dzArtist2} ${dzTitle2}`, cfg.hifiInstances);
             const hifiTracks = Array.isArray(hifiRes) ? hifiRes : (hifiRes?.tracks || []);
-            const _dzDurFb = _dzCachedMeta?.duration || 0;
-            for (const ht of hifiTracks.slice(0, 5)) {
-              if (_dzDurFb > 10 && ht.duration > 10 && Math.abs(ht.duration - _dzDurFb) > 25) continue;
+            for (const ht of hifiTracks.slice(0, 3)) {
               const hs = await hifiStream(ht.id, cfg.hifiInstances, cfg.preferredQuality);
               if (hs) { console.log(`[Deezer→HiFi fallback] ${dzTitle2}`); return c.json({ ...hs, fallback: 'hifi' }); }
             }
@@ -4118,18 +4146,10 @@ async function handleStream(c) {
               const scRes = await axios.get('https://api-v2.soundcloud.com/search/tracks', {
                 params: { q: `${dzArtist2} ${dzTitle2}`, client_id: cid, limit: 5 }, timeout: 5000,
               });
-              const _dzDurFbSc = _dzCachedMeta?.duration || 0;
-              for (const _scT of (scRes.data?.collection || []).slice(0, 5)) {
-                if (!_scT.streamable) continue;
-                if (_dzDurFbSc > 10) {
-                  const _scDurSec = Math.floor((_scT.full_duration || _scT.duration || 0) / 1000);
-                  if (_scDurSec > 10 && Math.abs(_scDurSec - _dzDurFbSc) > 25) continue;
-                }
-                const _dzScResult2 = await scStream(String(_scT.id), cid, cfg.scOAuthToken);
-                if (_dzScResult2 && !_dzScResult2.scSnipped) {
-                  console.log(`[Deezer→SC fallback] ${dzTitle2}`);
-                  return c.json({ ..._dzScResult2, fallback: 'sc' });
-                }
+              const scTrack = (scRes.data?.collection || []).find(t => t.streamable);
+              if (scTrack) {
+                const _dzScResult2 = await scStream(String(scTrack.id), cid, cfg.scOAuthToken);
+                if (_dzScResult2) { console.log(`[Deezer→SC fallback] ${dzTitle2}`); return c.json({ ..._dzScResult2, fallback: 'sc' }); }
               }
             }
           } catch(e) { console.warn('[Deezer→SC fallback]', e.message); }
