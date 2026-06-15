@@ -5455,7 +5455,7 @@ app.get('/health', async (c) => {
 
 // ─── Config / Generator Page ─────────────────────────────────────────────────
 
-function buildConfigPage(baseUrl) {
+function buildConfigPage(baseUrl, env) {
   var S = [];
   function w(s) { S.push(s); }
 
@@ -5595,7 +5595,7 @@ function buildConfigPage(baseUrl) {
 
   w('<div class="card">');
   w('  <div class="card-title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg> Deezer ARL <span class="ctag">optional</span></div>');
-  (c.env && c.env.DEEZER_ARL
+  (env && env.DEEZER_ARL
     ? w('  <div class="tip ok"><b>Deezer ARL is optional.</b> &#x2705; An ARL is <b>already configured server-side</b> &mdash; you don\'t need to enter one. You can paste your own below to override it.</div>')
     : w('  <div class="tip"><b>Deezer ARL is optional.</b> Without it, Deezer tracks appear in search but won\'t stream. Streams are FLAC (HiFi) or MP3 320 kbps when set.</div>'));
   w('  <label class="lbl" for="deezerArl">ARL Cookie Value</label>');
@@ -5934,11 +5934,11 @@ app.post('/refresh', async function(c) {
 
 // ─── GET / and /generator — serve config page ─────────────────────────────────
 app.get('/', async function(c) {
-  return c.html(buildConfigPage(getBaseUrl(c)));
+  return c.html(buildConfigPage(getBaseUrl(c), c.env));
 });
 
 app.get('/generator', async function(c) {
-  return c.html(buildConfigPage(getBaseUrl(c)));
+  return c.html(buildConfigPage(getBaseUrl(c), c.env));
 });
 
 // ─── 8SPINE Module Endpoints ──────────────────────────────────────────────────
