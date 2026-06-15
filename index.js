@@ -205,9 +205,6 @@ function getConfig(c) {
     qobuzUserToken: cfg.qobuz_user_token || c.env?.QOBUZ_USER_TOKEN || null,
     qobuzSecret:    cfg.qobuz_secret     || c.env?.QOBUZ_SECRET     || null,
     qobuzAppId:     cfg.qobuz_app_id     || c.env?.QOBUZ_APP_ID     || null,
-    qobuzUserToken: cfg.qobuz_user_token || (c.env && c.env.QOBUZ_USER_TOKEN) || null,
-    qobuzSecret:    cfg.qobuz_secret    || (c.env && c.env.QOBUZ_SECRET)     || null,
-    qobuzAppId:     cfg.qobuz_app_id    || (c.env && c.env.QOBUZ_APP_ID)     || null,
     // Ordered priority arrays for search/stream (empty = all enabled, default order)
     searchOrder: Array.isArray(cfg.search_order) ? cfg.search_order : [],
     streamOrder: Array.isArray(cfg.stream_order) ? cfg.stream_order : [],
