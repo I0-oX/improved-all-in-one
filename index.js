@@ -178,7 +178,7 @@ async function upstashCmd(env, ...args) {
 function getConfig(c) {
   const token = c.req.param('token') || '';
   const cfg = parseToken(token);
-  const VALID_QUALITIES = ['LOSSLESS', 'HIGH', 'LOW'];
+  const VALID_QUALITIES = ['HIRES_192', 'HIRES_96', 'LOSSLESS', 'HIGH', 'LOW'];
   return {
     hifiInstances: cfg.hifi
       ? cfg.hifi.split(',').map(u => u.trim()).filter(Boolean)
@@ -204,6 +204,9 @@ function getConfig(c) {
     qobuzUserToken: cfg.qobuz_user_token || c.env?.QOBUZ_USER_TOKEN || null,
     qobuzSecret:    cfg.qobuz_secret     || c.env?.QOBUZ_SECRET     || null,
     qobuzAppId:     cfg.qobuz_app_id     || c.env?.QOBUZ_APP_ID     || null,
+    qobuzUserToken: cfg.qobuz_user_token || (c.env && c.env.QOBUZ_USER_TOKEN) || null,
+    qobuzSecret:    cfg.qobuz_secret    || (c.env && c.env.QOBUZ_SECRET)     || null,
+    qobuzAppId:     cfg.qobuz_app_id    || (c.env && c.env.QOBUZ_APP_ID)     || null,
     // Ordered priority arrays for search/stream (empty = all enabled, default order)
     searchOrder: Array.isArray(cfg.search_order) ? cfg.search_order : [],
     streamOrder: Array.isArray(cfg.stream_order) ? cfg.stream_order : [],
@@ -434,7 +437,7 @@ async function getWorkingHiFiInstance(instances) {
 // qobuzStream:         stream URLs cached 28 min (proxies expire them at 30 min).
 // qobuzFindBestTrack:  search results cached 1 h; negative results cached 30 min.
 
-async function qobuzStream(trackId, env) {
+async function qobuzStream(trackId, env, preferredQuality) {
   const cacheKey = 'qstream:' + trackId;
   const cached = await cacheGet(cacheKey);
   if (cached) return cached;
@@ -445,9 +448,12 @@ async function qobuzStream(trackId, env) {
     } catch(e) {}
   }
 
-  const fmtOrder   = [27, 7, 6, 5];
   const fmtQuality = { 27: 'hires-192', 7: 'hires-96', 6: 'lossless', 5: '320kbps' };
   const fmtLabel   = { 27: 'flac', 7: 'flac', 6: 'flac', 5: 'mp3' };
+  // Build format order from preferredQuality — preferred first, then fallback highest→lowest
+  const _qFmtMap = { 'HIRES_192': 27, 'HIRES_96': 7, 'LOSSLESS': 6, 'HIGH': 5, 'LOW': 5 };
+  const _qPrefFmt = _qFmtMap[preferredQuality] || 27; // default: hi-res 192kHz
+  const fmtOrder = [_qPrefFmt, ...[27, 7, 6, 5].filter(f => f !== _qPrefFmt)];
 
   // ── Path 1: Native Qobuz direct stream (signed MD5, no proxy) ────────────
   for (const fmt of fmtOrder) {
@@ -3518,7 +3524,7 @@ async function handleStream(c) {
       try {
         const qTrack = await qobuzFindBestTrack(qMeta.title, qMeta.artist, qMeta.isrc || null, c.env, qMeta.duration);
         if (qTrack && qTrack.id) {
-          const qStream = await qobuzStream(qTrack.id, c.env);
+          const qStream = await qobuzStream(qTrack.id, c.env, cfg.preferredQuality);
           if (qStream) {
             const matchInfo = qMeta.isrc ? `ISRC:${qMeta.isrc}` : `"${qMeta.title}" by "${qMeta.artist}"`;
             console.log(`[Qobuz] HIT ${matchInfo} -> id=${qTrack.id} quality=${qStream.quality}`);
@@ -3545,7 +3551,7 @@ async function handleStream(c) {
     if (meta?.title && meta?.artist) {
       const _fbOrder = (_hifiStreamOrder.length
         ? _hifiStreamOrder.filter(s => s !== 'hifi')
-        : ['qobuz', 'deezer', 'sc'] // FIX: explicit default when no streamOrder configured
+        : ['qobuz', 'hifi', 'deezer', 'sc', 'ia'] // default: Qobuz→Tidal→Deezer→SC→IA
       );
       console.log(`[stream fallback] HiFi failed for "${meta.title}", trying: ${_fbOrder.join(',')}`);
       for (const _fb of _fbOrder) {
@@ -3558,7 +3564,7 @@ async function handleStream(c) {
             if (qTrack?.id) {
               const _qd = (meta.duration && qTrack.duration) ? Math.abs(meta.duration - qTrack.duration) : 0;
               if (_qd <= 20) {
-                const qs = await qobuzStream(qTrack.id, c.env);
+                const qs = await qobuzStream(qTrack.id, c.env, cfg.preferredQuality);
                 if (qs) { await cacheSet(streamCacheKey, { ...qs, fallback: 'qobuz' }, 280); return c.json({ ...qs, fallback: 'qobuz' }); }
               }
             }
@@ -3645,7 +3651,7 @@ async function handleStream(c) {
           if (_qDurDiff > 5) {
             console.log(`[SC→Qobuz] dur mismatch ${_qDurDiff}s — playing SC natively`);
           } else {
-            const qStream = await qobuzStream(qTrack.id, c.env);
+            const qStream = await qobuzStream(qTrack.id, c.env, cfg.preferredQuality);
             if (qStream) {
               console.log(`[SC→Qobuz priority] ISRC:${scMeta0.isrc} → qobuz:${qTrack.id}`);
               await cacheSet(scStreamCacheKey, qStream, 280);
@@ -3748,7 +3754,7 @@ async function handleStream(c) {
           if (!qTrack?.id) throw new Error('no qobuz track');
           const _sqd = (_scDurSec && qTrack.duration) ? Math.abs(_scDurSec - qTrack.duration) : 0;
           if (_sqd > 15) throw new Error(`qobuz dur mismatch ${_sqd}s`);
-          const qs = await qobuzStream(qTrack.id, c.env);
+          const qs = await qobuzStream(qTrack.id, c.env, cfg.preferredQuality);
           if (!qs) throw new Error('qobuz stream failed');
           console.log(`[SC→Qobuz] ${scMeta.isrc || scMeta.title} → ${qTrack.id}`);
           statHit('qobuz');
@@ -3827,7 +3833,7 @@ async function handleStream(c) {
     const _qSkipSelf = _qSelfOrder.length > 0 && !_qSelfOrder.includes('qobuz');
     if (!_qSkipSelf) {
       try {
-        const result = await qobuzStream(qobuzId, c.env);
+        const result = await qobuzStream(qobuzId, c.env, cfg.preferredQuality);
         if (result) {
           await cacheSet(sCacheKey, result, 280);
           return c.json(result);
@@ -3972,7 +3978,7 @@ async function handleStream(c) {
       if (!_dzEffNoQobuz && dzTitle2) {
         try {
           const qTrack = dzIsrc ? await qobuzFindByIsrc(dzIsrc) : await qobuzFindBestTrack(dzTitle2, dzArtist2, dzIsrc, c.env);
-          if (qTrack?.id) { const qStream = await qobuzStream(qTrack.id, c.env); if (qStream) { console.log(`[Deezer→Qobuz skip] ${dzTitle2}`); return c.json(qStream); } }
+          if (qTrack?.id) { const qStream = await qobuzStream(qTrack.id, c.env, cfg.preferredQuality); if (qStream) { console.log(`[Deezer→Qobuz skip] ${dzTitle2}`); return c.json(qStream); } }
         } catch(e) { console.warn('[Deezer→Qobuz skip]', e.message); }
       }
       if (!_dzEffNoHifi && dzTitle2) {
@@ -4017,7 +4023,7 @@ async function handleStream(c) {
               ? await qobuzFindByIsrc(dzIsrc)
               : (dzTitle2 ? await qobuzFindBestTrack(dzTitle2, dzArtist2, null, c.env) : null);
             if (qTrack?.id) {
-              const qStream = await qobuzStream(qTrack.id, c.env);
+              const qStream = await qobuzStream(qTrack.id, c.env, cfg.preferredQuality);
               if (qStream) { console.log(`[Deezer→Qobuz fallback] ${dzIsrc || dzTitle2}`); return c.json({ ...qStream, fallback: 'qobuz' }); }
             }
           } catch(e) { console.warn('[Deezer→Qobuz fallback]', e.message); }
@@ -4084,7 +4090,7 @@ async function handleStream(c) {
       try {
         const qTrack = await qobuzFindByIsrc(qIsrc);
         if (qTrack?.id) {
-          const qStream = await qobuzStream(qTrack.id, c.env);
+          const qStream = await qobuzStream(qTrack.id, c.env, cfg.preferredQuality);
           if (qStream) { console.log(`[Social→Qobuz ISRC] ${qIsrc} → ${qTrack.id}`); statHit('qobuz'); return c.json({ ...qStream, fallback: 'qobuz_isrc' }); }
         }
       } catch(e) { console.warn('[Social→Qobuz ISRC]', e.message); }
@@ -5614,7 +5620,8 @@ function buildConfigPage(baseUrl) {
   w('  <div class="tip"><b>This only affects Qobuz streams.</b> The addon always falls back gracefully if the selected tier is unavailable for a track.</div>');
   w('  <div class="qrow">');
   w('    <div class="qbtn on" id="q-auto"     onclick="setQuality(null)">        <span>Auto</span>    <span class="qs">Best available</span></div>');
-  w('    <div class="qbtn"    id="q-hires"    onclick="setQuality(\'HIRES\')">   <span>Hi-Res</span>  <span class="qs">up to 192 kHz</span></div>');
+  w('    <div class="qbtn"    id="q-hires192"    onclick="setQuality(\'HIRES_192\')">   <span>Hi-Res 192</span>  <span class="qs">24-bit 192kHz</span></div>');
+  w('    <div class="qbtn"    id="q-hires96"    onclick="setQuality(\'HIRES_96\')">   <span>Hi-Res 96</span>  <span class="qs">24-bit 96kHz</span></div>');
   w('    <div class="qbtn"    id="q-lossless" onclick="setQuality(\'LOSSLESS\')"><span>Lossless</span><span class="qs">CD 44.1 kHz</span></div>');
   w('    <div class="qbtn"    id="q-high"     onclick="setQuality(\'HIGH\')">    <span>High</span>    <span class="qs">320 kbps MP3</span></div>');
   w('  </div>');
@@ -5696,18 +5703,18 @@ function buildConfigPage(baseUrl) {
 
   w('<script>');
   w('var selectedQuality = null;');
-  w('var searchOrder = [];');
-  w('var streamOrder = [];');
+  w('var searchOrder = ["hifi","qobuz","deezer","sc","ia"];');
+  w('var streamOrder = ["qobuz","hifi","deezer","sc","ia"];');
   w('var ctEnabled = { podcast: true, audiobook: true, radio: true };');
   w('var SRCLABELS = { hifi:"Tidal HiFi", qobuz:"Qobuz", sc:"SoundCloud", ia:"Internet Archive", deezer:"Deezer" };');
   w('var ALLSRCS = ["qobuz","hifi","deezer","sc","ia"];');
 
   w('function setQuality(q) {');
   w('  selectedQuality = q;');
-  w('  ["auto","hires","lossless","high"].forEach(function(k) {');
-  w('    var el = document.getElementById("q-" + k); if (!el) return;');
-  w('    el.classList.toggle("on", (q === null && k === "auto") || (q && q.toLowerCase() === k));');
-  w('  });');
+    w('  var _qMap = {"HIRES_192":"q-hires192","HIRES_96":"q-hires96","LOSSLESS":"q-lossless","HIGH":"q-high"};');
+  w('  Object.keys(_qMap).forEach(function(k){ var el=document.getElementById(_qMap[k]); if(el) el.classList.remove("on"); });');
+  w('  var _autoEl = document.getElementById("q-auto"); if(_autoEl) _autoEl.classList.toggle("on", q===null);');
+  w('  if(q && _qMap[q]){ var el2=document.getElementById(_qMap[q]); if(el2) el2.classList.add("on"); }');
   w('}');
   w('setQuality(null);');
 
@@ -5826,7 +5833,7 @@ function buildConfigPage(baseUrl) {
   w('<\/body>');
   w('<\/html>');
 
-  return S.join(\'\\n\');
+  return S.join('\n');
 }
 
 function getBaseUrl(c) {
@@ -5844,7 +5851,7 @@ app.post('/generate', async function(c) {
   if (!/^https?:\/\/.+/.test(vercel))
     return c.json({ error: 'Vercel URL must start with http:// or https://' });
 
-  var VALID_QUALITIES = ['LOSSLESS', 'HIGH', 'LOW'];
+  var VALID_QUALITIES = ['HIRES_192', 'HIRES_96', 'LOSSLESS', 'HIGH', 'LOW'];
   var cfg = {};
   if (b.hifi)      cfg.hifi      = b.hifi;
   if (b.sc)        cfg.sc        = b.sc;
