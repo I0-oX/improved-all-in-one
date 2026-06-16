@@ -3085,8 +3085,9 @@ async function handleSearch(c) {
     }
   }
   if (_msetArgs.length) upstashCmd(c.env, 'MSET', ..._msetArgs).catch(()=>{});
-  const sc          = cfg.noSc   ? [] : scRaw;
-  const scPlaylists = cfg.noSc   ? [] : (Array.isArray(scResult) ? [] : (scResult.playlists || []));
+  const _scInOrder   = cfg.searchOrder.includes('sc');
+  const sc          = (cfg.noSc && !_scInOrder) ? [] : scRaw;
+  const scPlaylists = (cfg.noSc && !_scInOrder) ? [] : (Array.isArray(scResult) ? [] : (scResult.playlists || []));
   const iaMusicRaw  = iaMusicRes || [];
   const iaMusic     = cfg.noIa   ? [] : iaMusicRaw;
 
@@ -3119,7 +3120,8 @@ async function handleSearch(c) {
 
   // Merge podcast series: PI first, then Taddy
   const seriesTitles = new Set();
-  const deezerPlaylists = cfg.noDeezer ? [] : (deezerRes?.playlists || []);
+  const _deezerInOrder = cfg.searchOrder.includes('deezer');
+  const deezerPlaylists = (cfg.noDeezer && !_deezerInOrder) ? [] : (deezerRes?.playlists || []);
   const allSeries = [];
   {
     const _podLists = cfg.noPodcast ? [] : [
@@ -3180,7 +3182,7 @@ async function handleSearch(c) {
     : defaultMusicOrder.filter(k => {
         if (k === 'hifi'   && cfg.noHifi)   return false;
         if (k === 'qobuz'  && cfg.noQobuz)  return false;
-        if (k === 'sc'     && cfg.noSc)     return false;
+        if (k === 'sc'     && cfg.noSc     && !cfg.searchOrder.includes('sc'))     return false;
         if (k === 'ia'     && cfg.noIa)     return false;
         if (k === 'deezer' && cfg.noDeezer && !cfg.searchOrder.includes('deezer')) return false;
         return true;
@@ -3255,18 +3257,25 @@ async function handleSearch(c) {
   // track is NEVER shown if HiFi/Qobuz already has the same song.
   // Duration tolerance: ±3 seconds (strict — avoids deduping edit vs album cuts).
   const interleave = (sourceLists) => {
+    // Round-robin interleave: take item[0] from each source, then item[1], etc.
+    // First-seen-wins dedup → highest-priority source (leftmost in sourceLists) claims a
+    // track; lower-priority sources skip it if it's a dupe. But because we round-robin,
+    // deezer[0] and sc[0] appear at positions 4/5 (not after all of qobuz+hifi are drained),
+    // so unique Deezer/SC tracks surface near the top rather than being buried at position 36+.
     const result = [], seenIds = new Set(), seenKeys = new Set();
-    const seenKeyDur = new Map(); // first-seen duration per canon key
-    for (const list of sourceLists) {
-      for (const item of list) {
+    const seenKeyDur = new Map();
+    const maxLen = Math.max(0, ...sourceLists.map(l => l.length));
+    for (let i = 0; i < maxLen; i++) {
+      for (const list of sourceLists) {
+        if (i >= list.length) continue;
+        const item = list[i];
         if (!item) continue;
         const _rawIk = item.id;
         const ik = _rawIk ? String(_rawIk).toLowerCase().replace(/^(deezer|tidal|qobuz|sc|hifi):(?!album:|artist:|playlist:)/i, '').trim() : _rawIk;
         const ck = _canonKey(item);
         if (ik && seenIds.has(ik)) continue;
         if (ck && seenKeys.has(ck)) {
-          // Allow genuinely different track lengths (> 3s apart) through as a
-          // separate entry — e.g. radio edit (3:30) vs album version (4:15).
+          // Allow genuinely different track lengths (> 3s apart) through — e.g. radio edit vs album cut.
           const prevDur = seenKeyDur.get(ck) || 0;
           const curDur  = (item.duration && item.duration > 5) ? item.duration : 0;
           if (prevDur > 10 && curDur > 10 && Math.abs(prevDur - curDur) > 3) {
