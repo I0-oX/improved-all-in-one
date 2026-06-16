@@ -6422,6 +6422,436 @@ app.get('/8spine-source.json', async function(c) {
   return c.json(merged);
 });
 
+
+// ─── Config page (HiFi instance health check) ────────────────────────────────
+function buildConfigPage(baseUrl) {
+  var h = '';
+  h += '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">';
+  h += '<meta name="viewport" content="width=device-width,initial-scale=1">';
+  h += '<title>Eclipse Universal Addon</title>';
+  h += '<style>';
+  h += '*{box-sizing:border-box;margin:0;padding:0}';
+  h += 'body{background:#080808;color:#e0e0e0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:48px 20px 64px}';
+  h += '.card{background:#111;border:1px solid #1e1e1e;border-radius:18px;padding:36px;max-width:560px;width:100%;box-shadow:0 24px 64px rgba(0,0,0,.6);margin-bottom:20px}';
+  h += 'h1{font-size:22px;font-weight:700;margin-bottom:6px;color:#fff}';
+  h += 'h2{font-size:16px;font-weight:700;margin-bottom:14px;color:#fff}';
+  h += 'p.sub{font-size:14px;color:#666;margin-bottom:20px;line-height:1.6}';
+  h += '.pills{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:24px}';
+  h += '.pill{border-radius:20px;font-size:11px;font-weight:600;padding:4px 10px;background:#181818;color:#aaa;border:1px solid #2a2a2a}';
+  h += '.pill.hi{background:#0d1520;color:#4a9eff;border-color:#1a3050}';
+  h += '.tip{background:#0a0a0a;border:1px solid #1e1e1e;border-radius:10px;padding:12px 14px;margin-bottom:20px;font-size:12px;color:#888;line-height:1.7}';
+  h += '.tip b{color:#ccc}';
+  h += 'hr{border:none;border-top:1px solid #161616;margin:24px 0}';
+  h += '.steps{display:flex;flex-direction:column;gap:12px}';
+  h += '.step{display:flex;gap:12px;align-items:flex-start}';
+  h += '.sn{background:#161616;border:1px solid #222;border-radius:50%;width:26px;height:26px;min-width:26px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#555}';
+  h += '.st{font-size:13px;color:#555;line-height:1.6}.st b{color:#999}';
+  h += '.inst-list{display:flex;flex-direction:column;gap:6px;margin-top:10px}';
+  h += '.inst{display:flex;align-items:center;gap:8px;font-size:12px;padding:8px 12px;background:#0a0a0a;border:1px solid #161616;border-radius:8px}';
+  h += '.dot{width:7px;height:7px;border-radius:50%;background:#333;flex-shrink:0}';
+  h += '.dot.ok{background:#4a9a4a}.dot.err{background:#c04040}';
+  h += '.inst-url{flex:1;color:#666;font-family:"SF Mono","Fira Code",monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}';
+  h += '.inst-ms{color:#444;margin-left:auto;font-size:11px}';
+  h += 'button{cursor:pointer;border:none;border-radius:10px;font-size:14px;font-weight:700;padding:11px;width:100%;margin-top:10px;transition:background .15s}';
+  h += '.bg{background:#141414;color:#e0e0e0;border:1px solid #2a2a2a}.bg:hover{background:#1e1e1e}';
+  h += 'footer{font-size:12px;color:#333;margin-top:16px;text-align:center}';
+  h += '</style></head><body>';
+  h += '<svg width="52" height="52" viewBox="0 0 52 52" fill="none" style="margin-bottom:22px"><circle cx="26" cy="26" r="26" fill="#fff"/><path d="M10 32 Q18 14 26 26 Q34 38 42 20" stroke="#000" stroke-width="3.5" fill="none" stroke-linecap="round"/></svg>';
+  h += '<div class="card">';
+  h += '<h1>Eclipse Universal Addon</h1>';
+  h += '<p class="sub">All-in-one Eclipse addon. TIDAL (HiFi) &rarr; Qobuz Hi-Res &rarr; Deezer &rarr; SoundCloud &rarr; Internet Archive &rarr; Podcasts &rarr; Radio.</p>';
+  h += '<div class="tip"><b>Install:</b> Append your token to this URL and paste into Eclipse &rarr; Settings &rarr; Connections &rarr; Add Connection &rarr; Addon.</div>';
+  h += '<div class="pills">';
+  h += '<span class="pill hi">FLAC Hi-Res</span><span class="pill hi">Qobuz</span><span class="pill hi">Deezer</span>';
+  h += '<span class="pill">SoundCloud</span><span class="pill">Podcasts</span><span class="pill">Radio</span><span class="pill">Audiobooks</span>';
+  h += '</div>';
+  h += '<hr>';
+  h += '<div class="steps">';
+  h += '<div class="step"><div class="sn">1</div><div class="st">Build your token JSON and base64url-encode it: <b>{"hifi":"https://your-instance.com","q":"HIRES_192"}</b></div></div>';
+  h += '<div class="step"><div class="sn">2</div><div class="st">Open <b>Eclipse</b> &rarr; Settings &rarr; Connections &rarr; Add Connection &rarr; Addon</div></div>';
+  h += '<div class="step"><div class="sn">3</div><div class="st">Paste <b>' + baseUrl + '/{token}/manifest.json</b> and tap Install</div></div>';
+  h += '</div></div>';
+  h += '<div class="card">';
+  h += '<h2>HiFi Instance Health</h2>';
+  h += '<p class="sub" style="margin-bottom:14px">Live status of configured HiFi API instances used for TIDAL streaming.</p>';
+  h += '<div class="inst-list" id="instList"><div style="color:#333;font-size:13px">Checking...</div></div>';
+  h += '<button class="bg" style="margin-top:14px" onclick="checkHealth()">Refresh Status</button>';
+  h += '</div>';
+  h += '<footer>Eclipse Universal Addon &bull; TIDAL &bull; Qobuz &bull; Deezer &bull; SoundCloud &bull; Podcasts &bull; Radio</footer>';
+  h += '<script>';
+  h += 'function checkHealth(){';
+  h += '  var list=document.getElementById("instList");';
+  h += '  list.innerHTML=\'<div style="color:#333;font-size:13px">Checking...</div>\';';
+  h += '  fetch("/instances").then(function(r){return r.json();}).then(function(data){';
+  h += '    list.innerHTML="";';
+  h += '    data.instances.forEach(function(inst){';
+  h += '      var row=document.createElement("div");row.className="inst";';
+  h += '      var dot=document.createElement("span");dot.className="dot "+(inst.ok?"ok":"err");';
+  h += '      var urlSpan=document.createElement("span");urlSpan.className="inst-url";';
+  h += '      var raw=inst.url.replace(/^https?:\\/\\//,"");';
+  h += '      var dotPos=raw.indexOf(".");';
+  h += '      var masked=dotPos>0?raw.slice(0,dotPos+5)+"•••••••"+raw.slice(-4):raw;';
+  h += '      urlSpan.textContent=masked;';
+  h += '      row.appendChild(dot);row.appendChild(urlSpan);';
+  h += '      if(inst.ok){var ms=document.createElement("span");ms.className="inst-ms";ms.textContent=inst.ms+"ms";row.appendChild(ms);}';
+  h += '      list.appendChild(row);';
+  h += '    });';
+  h += '  }).catch(function(){list.innerHTML=\'<div style="color:#c04040;font-size:13px">Could not reach server</div>\';});';
+  h += '}';
+  h += 'checkHealth();';
+  h += '<\/script></body></html>';
+  return h;
+}
+
+// ─── GET / — Config & health page ─────────────────────────────────────────────
+app.get('/', async function(c) {
+  var baseUrl = (c.req.header('x-forwarded-proto') || 'https') + '://' + c.req.header('host');
+  return new Response(buildConfigPage(baseUrl), { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+});
+
+// ─── GET /instances — HiFi instance health check ──────────────────────────────
+app.get('/instances', async function(c) {
+  var instances = DEFAULT_HIFI_INSTANCES;
+  var results = await Promise.allSettled(
+    instances.map(function(inst) {
+      var start = Date.now();
+      return axios.get(inst + '/search/', {
+        params: { s: 'test', limit: 1 },
+        headers: { 'User-Agent': UA },
+        timeout: 6000,
+      }).then(function(r) {
+        return { url: inst, ok: r.status === 200, ms: Date.now() - start };
+      }).catch(function() {
+        return { url: inst, ok: false, ms: Date.now() - start };
+      });
+    })
+  );
+  var instanceList = results.map(function(r, i) {
+    return r.status === 'fulfilled' ? r.value : { url: instances[i], ok: false, ms: 0 };
+  });
+  return Response.json({ instances: instanceList });
+});
+
+
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ─── JELLYFIN INTEGRATION ────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// Token fields (base64url JSON): { jf_url, jf_user, jf_pass }
+// Manifest URL: https://your-worker.com/{token}/jellyfin/manifest.json
+//
+// Routes:
+//   /:token/jellyfin/manifest.json  — Eclipse manifest (music only)
+//   /:token/jellyfin/search?q=...   — search tracks / albums / artists
+//   /:token/jellyfin/stream/:id     — stream a track (direct FLAC or HLS)
+//   /:token/jellyfin/album/:id      — album + track list
+//   /:token/jellyfin/artist/:id     — artist + album list
+//   /:token/jellyfin/catalog        — recently added items
+// ══════════════════════════════════════════════════════════════════════════════
+
+async function jfAuth(serverUrl, username, password) {
+  const cacheKey = `jf:auth:${serverUrl}:${username}`;
+  const cached = await cacheGet(cacheKey);
+  if (cached) return cached;
+  const url = serverUrl.replace(/\/$/, '') + '/Users/AuthenticateByName';
+  const r = await axios.post(url, { Username: username, Pw: password || '' }, {
+    headers: {
+      'X-Emby-Authorization': 'MediaBrowser Client="Eclipse", Device="Addon", DeviceId="eclipse-addon", Version="1.0"',
+      'Content-Type': 'application/json',
+    },
+    timeout: 8000,
+  });
+  if (!r.data?.AccessToken || !r.data?.User?.Id) throw new Error('Jellyfin auth failed');
+  const result = { token: r.data.AccessToken, userId: r.data.User.Id };
+  await cacheSet(cacheKey, result, 3600);
+  return result;
+}
+
+function getJfConfig(c) {
+  const token = c.req.param('token') || '';
+  const cfg = parseToken(token);
+  return {
+    serverUrl: cfg.jf_url ? cfg.jf_url.replace(/\/$/, '') : null,
+    username:  cfg.jf_user || null,
+    password:  cfg.jf_pass || '',
+  };
+}
+
+function jfMapTrack(item, serverUrl) {
+  const id = item.Id;
+  const cover = item.ImageTags?.Primary
+    ? `${serverUrl}/Items/${id}/Images/Primary?maxHeight=300&quality=90&tag=${item.ImageTags.Primary}`
+    : (item.AlbumPrimaryImageTag
+        ? `${serverUrl}/Items/${item.AlbumId}/Images/Primary?maxHeight=300&quality=90&tag=${item.AlbumPrimaryImageTag}`
+        : null);
+  return {
+    id:           `jf_${id}`,
+    title:        item.Name || 'Unknown',
+    artist:       (item.Artists && item.Artists.length) ? item.Artists.join(', ') : (item.AlbumArtist || 'Unknown Artist'),
+    album:        item.Album || '',
+    artworkURL:   cover,
+    duration:     item.RunTimeTicks ? Math.floor(item.RunTimeTicks / 10000000) : 0,
+    audioQuality: 'LOSSLESS',
+    source:       'jellyfin',
+  };
+}
+
+function jfMapAlbum(item, serverUrl) {
+  const cover = item.ImageTags?.Primary
+    ? `${serverUrl}/Items/${item.Id}/Images/Primary?maxHeight=300&quality=90&tag=${item.ImageTags.Primary}`
+    : null;
+  return {
+    id:         `jfalbum_${item.Id}`,
+    title:      item.Name || 'Unknown Album',
+    artist:     item.AlbumArtist || 'Unknown Artist',
+    artworkURL: cover,
+    year:       item.ProductionYear || 0,
+    source:     'jellyfin',
+  };
+}
+
+function jfMapArtist(item, serverUrl) {
+  const cover = item.ImageTags?.Primary
+    ? `${serverUrl}/Items/${item.Id}/Images/Primary?maxHeight=300&quality=90&tag=${item.ImageTags.Primary}`
+    : null;
+  return {
+    id:         `jfartist_${item.Id}`,
+    name:       item.Name || 'Unknown Artist',
+    artworkURL: cover,
+    source:     'jellyfin',
+  };
+}
+
+// ─── Jellyfin manifest ────────────────────────────────────────────────────────
+app.get('/:token/jellyfin/manifest.json', async (c) => {
+  const cfg   = getJfConfig(c);
+  const token = c.req.param('token') || '';
+  const shortName = cfg.serverUrl
+    ? cfg.serverUrl.replace(/^https?:\/\//, '').split('/')[0].split(':')[0]
+    : 'Jellyfin';
+  return c.json({
+    id:          `com.eclipse.jellyfin.${token.slice(0, 8)}`,
+    name:        `Jellyfin — ${shortName}`,
+    version:     '1.0.0',
+    description: 'Streams your personal Jellyfin music library — tracks, albums, and artists only.',
+    icon:        'https://jellyfin.org/images/favicon.ico',
+    resources:   ['search', 'stream', 'catalog'],
+    types:       ['track', 'album', 'artist'],
+    contentType: 'music',
+  });
+});
+
+// ─── Jellyfin search ──────────────────────────────────────────────────────────
+app.get('/:token/jellyfin/search', async (c) => {
+  const query = (c.req.query('q') || '').trim();
+  if (query.length < 1) return c.json({ tracks: [], albums: [], artists: [], playlists: [] });
+  const cfg = getJfConfig(c);
+  if (!cfg.serverUrl || !cfg.username)
+    return c.json({ error: 'Jellyfin not configured. Add jf_url and jf_user to your token.' }, 400);
+  const cacheKey = `jf:search:${cfg.serverUrl}:${query.toLowerCase()}`;
+  const cached   = await cacheGet(cacheKey);
+  if (cached) return c.json(cached);
+  try {
+    const auth    = await jfAuth(cfg.serverUrl, cfg.username, cfg.password);
+    const base    = cfg.serverUrl;
+    const headers = { 'X-Emby-Authorization': `MediaBrowser Token="${auth.token}"` };
+    const shared  = {
+      userId: auth.userId, searchTerm: query, Recursive: true,
+      Fields: 'PrimaryImageAspectRatio,BasicSyncInfo,Artists,AlbumArtist,Album,RunTimeTicks',
+      ImageTypeLimit: 1, EnableImageTypes: 'Primary', Limit: 25,
+    };
+    const [tracksRes, albumsRes, artistsRes] = await Promise.allSettled([
+      axios.get(`${base}/Items`, { params: { ...shared, IncludeItemTypes: 'Audio',       SortBy: 'SortName', SortOrder: 'Ascending' }, headers, timeout: 8000 }),
+      axios.get(`${base}/Items`, { params: { ...shared, IncludeItemTypes: 'MusicAlbum',  SortBy: 'SortName', SortOrder: 'Ascending' }, headers, timeout: 8000 }),
+      axios.get(`${base}/Items`, { params: { ...shared, IncludeItemTypes: 'MusicArtist', SortBy: 'SortName', SortOrder: 'Ascending' }, headers, timeout: 8000 }),
+    ]);
+    const get = r => r.status === 'fulfilled' ? (r.value.data?.Items || []) : [];
+    const result = {
+      tracks:    get(tracksRes).map(t  => jfMapTrack(t,  base)),
+      albums:    get(albumsRes).map(a  => jfMapAlbum(a,  base)),
+      artists:   get(artistsRes).map(a => jfMapArtist(a, base)),
+      playlists: [],
+    };
+    await cacheSet(cacheKey, result, 120);
+    return c.json(result);
+  } catch (e) {
+    console.error('[Jellyfin search]', e.message);
+    return c.json({ error: 'Jellyfin search failed: ' + e.message }, 500);
+  }
+});
+
+// ─── Jellyfin stream ──────────────────────────────────────────────────────────
+app.get('/:token/jellyfin/stream/:id', async (c) => {
+  const rawId  = c.req.param('id');
+  const itemId = rawId.replace(/^jf_/, '');
+  const cfg = getJfConfig(c);
+  if (!cfg.serverUrl || !cfg.username) return c.json({ error: 'Jellyfin not configured.' }, 400);
+  const cacheKey = `jf:stream:${cfg.serverUrl}:${itemId}`;
+  const cached   = await cacheGet(cacheKey);
+  if (cached) return c.json(cached);
+  try {
+    const auth = await jfAuth(cfg.serverUrl, cfg.username, cfg.password);
+    const base = cfg.serverUrl;
+    const streamUrl = `${base}/Audio/${itemId}/universal`
+      + `?UserId=${auth.userId}&api_key=${auth.token}`
+      + `&MaxStreamingBitrate=140000000`
+      + `&AudioCodec=flac,mp3,aac`
+      + `&TranscodingContainer=ts`
+      + `&TranscodingProtocol=hls`
+      + `&EnableRedirection=true`
+      + `&EnableRemoteMedia=true`;
+    const metaRes = await axios.get(`${base}/Items/${itemId}`, {
+      params: { userId: auth.userId, Fields: 'MediaSources,RunTimeTicks' },
+      headers: { 'X-Emby-Authorization': `MediaBrowser Token="${auth.token}"` },
+      timeout: 5000,
+    });
+    const container  = (metaRes.data?.MediaSources?.[0]?.Container || 'mp3').toLowerCase();
+    const isLossless = ['flac', 'wav', 'aiff', 'alac'].includes(container);
+    const result = { url: streamUrl, format: container, quality: isLossless ? 'lossless' : '320kbps', source: 'jellyfin' };
+    await cacheSet(cacheKey, result, 3600);
+    return c.json(result);
+  } catch (e) {
+    console.error('[Jellyfin stream]', e.message);
+    return c.json({ error: 'Jellyfin stream failed: ' + e.message }, 500);
+  }
+});
+
+// ─── Jellyfin album ───────────────────────────────────────────────────────────
+app.get('/:token/jellyfin/album/:id', async (c) => {
+  const rawId   = c.req.param('id');
+  const albumId = rawId.replace(/^jfalbum_/, '');
+  const cfg = getJfConfig(c);
+  if (!cfg.serverUrl || !cfg.username) return c.json({ error: 'Jellyfin not configured.' }, 400);
+  const cacheKey = `jf:album:${cfg.serverUrl}:${albumId}`;
+  const cached   = await cacheGet(cacheKey);
+  if (cached) return c.json(cached);
+  try {
+    const auth    = await jfAuth(cfg.serverUrl, cfg.username, cfg.password);
+    const base    = cfg.serverUrl;
+    const headers = { 'X-Emby-Authorization': `MediaBrowser Token="${auth.token}"` };
+    const [albumRes, tracksRes] = await Promise.all([
+      axios.get(`${base}/Items/${albumId}`, {
+        params: { userId: auth.userId, Fields: 'PrimaryImageAspectRatio,Artists,AlbumArtist' },
+        headers, timeout: 6000,
+      }),
+      axios.get(`${base}/Items`, {
+        params: {
+          userId: auth.userId, ParentId: albumId, IncludeItemTypes: 'Audio',
+          Recursive: true, SortBy: 'IndexNumber,SortName', SortOrder: 'Ascending',
+          Fields: 'RunTimeTicks,Artists,AlbumArtist,Album,PrimaryImageAspectRatio',
+          ImageTypeLimit: 1, EnableImageTypes: 'Primary',
+        },
+        headers, timeout: 8000,
+      }),
+    ]);
+    const album  = albumRes.data || {};
+    const tracks = (tracksRes.data?.Items || []).map(t => jfMapTrack(t, base));
+    const cover  = album.ImageTags?.Primary
+      ? `${base}/Items/${albumId}/Images/Primary?maxHeight=300&quality=90&tag=${album.ImageTags.Primary}`
+      : null;
+    const result = {
+      id: rawId, title: album.Name || 'Unknown Album',
+      artist: album.AlbumArtist || 'Unknown Artist',
+      artworkURL: cover, year: album.ProductionYear || 0, tracks,
+    };
+    await cacheSet(cacheKey, result, 300);
+    return c.json(result);
+  } catch (e) {
+    console.error('[Jellyfin album]', e.message);
+    return c.json({ error: 'Jellyfin album failed: ' + e.message }, 500);
+  }
+});
+
+// ─── Jellyfin artist ──────────────────────────────────────────────────────────
+app.get('/:token/jellyfin/artist/:id', async (c) => {
+  const rawId    = c.req.param('id');
+  const artistId = rawId.replace(/^jfartist_/, '');
+  const cfg = getJfConfig(c);
+  if (!cfg.serverUrl || !cfg.username) return c.json({ error: 'Jellyfin not configured.' }, 400);
+  const cacheKey = `jf:artist:${cfg.serverUrl}:${artistId}`;
+  const cached   = await cacheGet(cacheKey);
+  if (cached) return c.json(cached);
+  try {
+    const auth    = await jfAuth(cfg.serverUrl, cfg.username, cfg.password);
+    const base    = cfg.serverUrl;
+    const headers = { 'X-Emby-Authorization': `MediaBrowser Token="${auth.token}"` };
+    const [artistRes, albumsRes] = await Promise.all([
+      axios.get(`${base}/Items/${artistId}`, {
+        params: { userId: auth.userId, Fields: 'PrimaryImageAspectRatio' },
+        headers, timeout: 6000,
+      }),
+      axios.get(`${base}/Items`, {
+        params: {
+          userId: auth.userId, ArtistIds: artistId, IncludeItemTypes: 'MusicAlbum',
+          Recursive: true, SortBy: 'ProductionYear,SortName', SortOrder: 'Descending',
+          Fields: 'PrimaryImageAspectRatio,AlbumArtist',
+          ImageTypeLimit: 1, EnableImageTypes: 'Primary', Limit: 50,
+        },
+        headers, timeout: 8000,
+      }),
+    ]);
+    const artist = artistRes.data || {};
+    const albums = (albumsRes.data?.Items || []).map(a => jfMapAlbum(a, base));
+    const cover  = artist.ImageTags?.Primary
+      ? `${base}/Items/${artistId}/Images/Primary?maxHeight=300&quality=90&tag=${artist.ImageTags.Primary}`
+      : null;
+    const result = { id: rawId, name: artist.Name || 'Unknown Artist', artworkURL: cover, albums, tracks: [] };
+    await cacheSet(cacheKey, result, 300);
+    return c.json(result);
+  } catch (e) {
+    console.error('[Jellyfin artist]', e.message);
+    return c.json({ error: 'Jellyfin artist failed: ' + e.message }, 500);
+  }
+});
+
+// ─── Jellyfin catalog (recently added) ───────────────────────────────────────
+app.get('/:token/jellyfin/catalog', async (c) => {
+  const cfg = getJfConfig(c);
+  if (!cfg.serverUrl || !cfg.username) return c.json({ error: 'Jellyfin not configured.' }, 400);
+  const cacheKey = `jf:catalog:${cfg.serverUrl}`;
+  const cached   = await cacheGet(cacheKey);
+  if (cached) return c.json(cached);
+  try {
+    const auth    = await jfAuth(cfg.serverUrl, cfg.username, cfg.password);
+    const base    = cfg.serverUrl;
+    const headers = { 'X-Emby-Authorization': `MediaBrowser Token="${auth.token}"` };
+    const [recentRes, albumsRes, artistsRes] = await Promise.allSettled([
+      axios.get(`${base}/Items`, {
+        params: { userId: auth.userId, IncludeItemTypes: 'Audio', SortBy: 'DateCreated', SortOrder: 'Descending',
+          Recursive: true, Limit: 20, Fields: 'RunTimeTicks,Artists,AlbumArtist,Album,PrimaryImageAspectRatio',
+          ImageTypeLimit: 1, EnableImageTypes: 'Primary' },
+        headers, timeout: 8000,
+      }),
+      axios.get(`${base}/Items`, {
+        params: { userId: auth.userId, IncludeItemTypes: 'MusicAlbum', SortBy: 'DateCreated', SortOrder: 'Descending',
+          Recursive: true, Limit: 20, Fields: 'PrimaryImageAspectRatio,AlbumArtist',
+          ImageTypeLimit: 1, EnableImageTypes: 'Primary' },
+        headers, timeout: 8000,
+      }),
+      axios.get(`${base}/Items`, {
+        params: { userId: auth.userId, IncludeItemTypes: 'MusicArtist', SortBy: 'SortName', SortOrder: 'Ascending',
+          Recursive: true, Limit: 20, Fields: 'PrimaryImageAspectRatio',
+          ImageTypeLimit: 1, EnableImageTypes: 'Primary' },
+        headers, timeout: 8000,
+      }),
+    ]);
+    const get = r => r.status === 'fulfilled' ? (r.value.data?.Items || []) : [];
+    const result = {
+      tracks:    get(recentRes).map(t  => jfMapTrack(t,  base)),
+      albums:    get(albumsRes).map(a  => jfMapAlbum(a,  base)),
+      artists:   get(artistsRes).map(a => jfMapArtist(a, base)),
+      playlists: [],
+    };
+    await cacheSet(cacheKey, result, 300);
+    return c.json(result);
+  } catch (e) {
+    console.error('[Jellyfin catalog]', e.message);
+    return c.json({ error: 'Jellyfin catalog failed: ' + e.message }, 500);
+  }
+});
+
+
 // ─── Catch-all token info ─────────────────────────────────────────────────────
 app.get('/:token', function(c) {
   var t = c.req.param('token');
