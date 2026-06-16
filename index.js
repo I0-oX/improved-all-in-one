@@ -6071,6 +6071,14 @@ function buildConfigPage(baseUrl, env) {
   w('  </div>');
   w('</div>');
 
+
+  w('<div class="card">');
+  w('  <div class="card-title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg> HiFi Instance Health <span class="ctag">live</span></div>');
+  w('  <div class="tip">Live status of the HiFi proxy instances used for TIDAL streaming. Green = online, Red = unreachable.</div>');
+  w('  <div id="hifiInstList" style="display:flex;flex-direction:column;gap:5px;margin-top:4px"><div style="color:var(--muted);font-size:.75rem">Checking...</div></div>');
+  w('  <button class="btn-gen" style="margin-top:10px;padding:8px 0;font-size:.75rem" onclick="checkHifiHealth()">Refresh Status</button>');
+  w('</div>');
+
   w('<footer>Eclipse Universal Addon &bull; Credentials encoded in URL only &bull; Never stored server-side<br>Qobuz &bull; Tidal HiFi &bull; Deezer &bull; SoundCloud &bull; Internet Archive &bull; Podcasts &bull; Radio</footer>');
   w('</div>');
 
@@ -6220,6 +6228,32 @@ function buildConfigPage(baseUrl, env) {
   w('  if (warn) warn.style.display = (!on) ? "block" : "none";');
   w('}');
 
+
+
+  w('function checkHifiHealth(){');
+  w('  var list=document.getElementById("hifiInstList");');
+  w('  if(!list)return;');
+  w('  list.innerHTML=\'<div style="color:var(--muted);font-size:.75rem">Checking\u2026</div>\';');
+  w('  fetch("/instances").then(function(r){return r.json();}).then(function(data){');
+  w('    list.innerHTML="";');
+  w('    if(!data.instances||!data.instances.length){list.innerHTML=\'<div style="color:var(--muted);font-size:.75rem">No instances configured.</div>\';return;}');
+  w('    data.instances.forEach(function(inst){');
+  w('      var row=document.createElement("div");');
+  w('      row.style.cssText="display:flex;align-items:center;gap:8px;font-size:.72rem;padding:7px 10px;background:var(--bg);border:1px solid var(--bdr);border-radius:8px";');
+  w('      var dot=document.createElement("span");');
+  w('      dot.style.cssText="width:7px;height:7px;border-radius:50%;flex-shrink:0;background:"+(inst.online?"#4a9a4a":"#c04040");');
+  w('      var urlSpan=document.createElement("span");');
+  w('      urlSpan.style.cssText="flex:1;color:var(--muted);font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";');
+  w('      var raw=(inst.inst||inst.url||"").replace(/^https?:\\/\\//,"");');
+  w('      var dp=raw.indexOf(".");');
+  w('      urlSpan.textContent=dp>0?raw.slice(0,dp+5)+"\u2022\u2022\u2022\u2022\u2022"+raw.slice(-4):raw;');
+  w('      row.appendChild(dot);row.appendChild(urlSpan);');
+  w('      if(inst.online){var ms=document.createElement("span");ms.style.cssText="color:var(--faint);margin-left:auto;font-size:.65rem";ms.textContent=(inst.latency||inst.ms||0)+"ms";row.appendChild(ms);}');
+  w('      list.appendChild(row);');
+  w('    });');
+  w('  }).catch(function(){list.innerHTML=\'<div style="color:#c04040;font-size:.72rem">Could not reach server</div>\';});');
+  w('}');
+  w('checkHifiHealth();');
 
   w('<\/script>');
   w('<\/body>');
