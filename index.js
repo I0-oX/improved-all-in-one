@@ -2273,7 +2273,50 @@ async function deezerSearch(query) {
       artworkURL: p.picture_xl || p.picture_big || p.picture || null,
       trackCount: p.nb_tracks || undefined, source: 'deezer',
     }));
-    const result = { tracks, albums, artists, playlists };
+    // Fallback: if direct track search returned 0 results but albums were found,
+    // fetch tracks from the top 2 albums and surface the best matches.
+    // This handles tracks like "First Love by Gulfateh Khan" where Deezer's
+    // /search endpoint misses the track but the album is indexed correctly.
+    let finalTracks = tracks;
+    if (finalTracks.length === 0 && rawAlbums.length > 0) {
+      try {
+        const albumTrackFetches = rawAlbums.slice(0, 2).map(a =>
+          axios.get(`${DEEZER_API}/album/${a.id}/tracks`, {
+            params: { limit: 50 }, headers: { 'User-Agent': UA }, timeout: 3500
+          })
+            .then(r => (r.data?.data || []).map(t => ({
+              ...t,
+              _albumArtist: a.artist?.name || '',
+              _albumTitle: a.title || '',
+              _albumCover: a.cover_xl || a.cover_big || a.cover || null,
+            })))
+            .catch(() => [])
+        );
+        const albumTrackResults = await Promise.all(albumTrackFetches);
+        const qNorm = query.toLowerCase().replace(/[^a-z0-9 ]/g, '');
+        const qWords = qNorm.split(' ').filter(w => w.length > 2);
+        for (const tList of albumTrackResults) {
+          for (const t of tList) {
+            const tNorm = (t.title || '').toLowerCase().replace(/[^a-z0-9 ]/g, '');
+            if (!tNorm || !qWords.length) continue;
+            if (!qWords.some(w => tNorm.includes(w))) continue;
+            finalTracks.push({
+              id: `deezer:${t.id}`,
+              title: t.title || 'Unknown',
+              artist: t._albumArtist || t.artist?.name || 'Unknown',
+              album: t._albumTitle || '',
+              duration: t.duration || undefined,
+              artworkURL: t._albumCover,
+              format: 'mp3',
+              source: 'deezer',
+              isrc: t.isrc ? String(t.isrc).toUpperCase().replace(/[^A-Z0-9]/g, '') : null,
+            });
+          }
+        }
+        finalTracks = finalTracks.slice(0, 20);
+      } catch(e) { console.warn('[Deezer album-track fallback]', e.message); }
+    }
+    const result = { tracks: finalTracks, albums, artists, playlists };
     await cacheSet(cacheKey, result, 300);
     return result;
   } catch (e) {
@@ -3640,12 +3683,22 @@ async function handleStream(c) {
       try {
         const qTrack = await qobuzFindBestTrack(qMeta.title, qMeta.artist, qMeta.isrc || null, c.env, qMeta.duration);
         if (qTrack && qTrack.id) {
-          const qStream = await qobuzStream(qTrack.id, c.env, cfg.preferredQuality);
-          if (qStream) {
-            const matchInfo = qMeta.isrc ? `ISRC:${qMeta.isrc}` : `"${qMeta.title}" by "${qMeta.artist}"`;
-            console.log(`[Qobuz] HIT ${matchInfo} -> id=${qTrack.id} quality=${qStream.quality}`);
-            await cacheSet(streamCacheKey, qStream, 280);
-            return c.json(qStream);
+          // ISRC cross-check: if we matched by title+artist, verify the Qobuz result's ISRC
+          // matches what we expected — prevents wrong-track substitution (e.g. "Remember My Name").
+          const _normIsrcStr = s => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+          const _qIsrcOk = !qMeta.isrc          // no expected ISRC — accept any result
+            || !qTrack.isrc                      // Qobuz didn't return ISRC — accept
+            || _normIsrcStr(qTrack.isrc) === _normIsrcStr(qMeta.isrc); // ISRCs match
+          if (!_qIsrcOk) {
+            console.warn(`[Qobuz] ISRC mismatch: wanted ${qMeta.isrc}, Qobuz returned ${qTrack.isrc} for "${qMeta.title}" — skipping, falling through to HiFi`);
+          } else {
+            const qStream = await qobuzStream(qTrack.id, c.env, cfg.preferredQuality);
+            if (qStream) {
+              const matchInfo = qMeta.isrc ? `ISRC:${qMeta.isrc}` : `"${qMeta.title}" by "${qMeta.artist}"`;
+              console.log(`[Qobuz] HIT ${matchInfo} -> id=${qTrack.id} quality=${qStream.quality}`);
+              await cacheSet(streamCacheKey, qStream, 280);
+              return c.json(qStream);
+            }
           }
         }
         console.log(`[Qobuz] no match for "${qMeta.title}" by "${qMeta.artist}"${qMeta.isrc ? ` (ISRC:${qMeta.isrc})` : ''} — falling back to HiFi`);
@@ -4087,9 +4140,43 @@ async function handleStream(c) {
     // If deezer is NOT in streamOrder, skip deezerStream() entirely and cross-source immediately
     const dzSkipDeezer = _dzIdx === -1 && _dzStreamOrder.length > 0; // skip when streamOrder is set and deezer not in it
 
-    // FIX 2: Always try Deezer FIRST for a deezer: track ID.
-    // Qobuz/HiFi/SC upgrade runs only AFTER Deezer fails — never preemptively.
-    // dzSkipDeezer is only true when streamOrder is explicit and excludes deezer entirely.
+    // Stream order respected: if qobuz or hifi ranks BEFORE deezer in streamOrder,
+    // try them first using ISRC/title lookup before falling back to native Deezer.
+    // dzSkipDeezer is true only when streamOrder explicitly excludes deezer entirely.
+    const _dzQFirst = !_dzEffNoQobuz && _dzQIdx !== -1 && _dzIdx !== -1 && _dzQIdx < _dzIdx;
+    const _dzHFirst = !_dzEffNoHifi  && _dzHIdx !== -1 && _dzIdx !== -1 && _dzHIdx < _dzIdx;
+
+    if (_dzQFirst && (dzIsrc || dzTitle2)) {
+      try {
+        const qTrack = dzIsrc
+          ? await qobuzFindByIsrc(dzIsrc)
+          : await qobuzFindBestTrack(dzTitle2, dzArtist2, null, c.env, _dzCachedMeta?.duration);
+        if (qTrack?.id) {
+          const qStream = await qobuzStream(qTrack.id, c.env, cfg.preferredQuality);
+          if (qStream) {
+            console.log(`[Deezer→Qobuz priority] ${dzIsrc || dzTitle2}`);
+            return c.json({ ...qStream, fallbackSource: 'qobuz' });
+          }
+        }
+      } catch(e) { console.warn('[Deezer→Qobuz priority]', e.message); }
+    }
+
+    if (_dzHFirst && (dzIsrc || dzTitle2)) {
+      try {
+        const _hRes2 = await hifiSearch(`${dzArtist2} ${dzTitle2}`, cfg.hifiInstances);
+        const _htList2 = Array.isArray(_hRes2) ? _hRes2 : (_hRes2?.tracks || []);
+        for (const ht of _htList2.slice(0, 3)) {
+          const _htIsrc2 = ht.isrc ? String(ht.isrc).toUpperCase().replace(/[^A-Z0-9]/g, '') : null;
+          if (dzIsrc && _htIsrc2 && _htIsrc2 !== dzIsrc) continue;
+          const hs = await hifiStream(ht.id, cfg.hifiInstances, cfg.preferredQuality);
+          if (hs) {
+            console.log(`[Deezer→HiFi priority] ${dzIsrc || dzTitle2}`);
+            return c.json({ ...hs, fallbackSource: 'hifi' });
+          }
+        }
+      } catch(e) { console.warn('[Deezer→HiFi priority]', e.message); }
+    }
+
     if (dzSkipDeezer) {
       // Deezer excluded from streamOrder — go straight to other sources
       if (!_dzEffNoQobuz && dzTitle2) {
